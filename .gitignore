@@ -6,3 +6,37 @@ tests/*/
 checkpoints/
 models/*.gguf
 __pycache__/
+
+# Dead Internet Mode -- secrets, and anything carrying real people
+#
+# Nothing below this line belongs in a public repo. The roster holds the
+# name, reference transcript and inferred persona of every cloned speaker,
+# and voices/ holds their audio; both are about real people who agreed to
+# a private bot, not to being published. The glob is deliberate -- an
+# exact `deadinternet.json` misses the .tmp the atomic save writes and the
+# hand-made .bak/.RECOVERED/.CORRUPT copies, which carry the same roster.
+
+# Credentials
+.env
+
+# Speaker roster: names, personas, reference transcripts, settings,
+# user-edited topic/announce templates
+deadinternet.json*
+
+# Reference clips for every cloned voice
+voices/
+
+# Transcripts and prompts of live sessions
+app.log
+tts-server.log
+
+# Local environment
+.venv-app/
+.stfolder/
+
+# Hand-made scratch copies -- these are how a roster or a half-finished
+# refactor gets published by accident
+*.bak-*
+*.RECOVERED
+*.CORRUPT-*
+*.tmp
