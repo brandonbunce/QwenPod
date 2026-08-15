@@ -24,6 +24,7 @@ from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
 from ..llm import PROVIDER_OPENAI, PROVIDERS
 from .autoscroll import AUTOSCROLL_JS
 from .autosave import Autosave
+from .binding import bound
 from .feed import MINE_POLL, FeedUpdate
 from .feed import crowd_md as _crowd_md
 from .feed import poll as _poll
@@ -36,6 +37,7 @@ from .selectors import roster_choices as _roster_choices
 from .selectors import selector_updates as _selector_updates
 from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
+from .tabs import discord as t_discord
 
 
 class _Bag:
@@ -265,34 +267,6 @@ def build(app):
                     "press Save speaker."))
 
     # ---- discord ----------------------------------------------------------
-    def connect_bot():
-        ok, msg = app.connect_discord()
-        labels = [c[0] for c in app.text_channel_choices()]
-        return (gr.update(choices=[c[0] for c in app.channel_choices()]),
-                gr.update(choices=labels,
-                          value=app.text_channel_labels(state.settings.topic_channel_ids)),
-                note(msg) if ok else warn(msg))
-
-    def resync_connection():
-        """Repopulate the channel lists if the bot is already connected from
-        before this page load -- a reload (or a second tab) never re-checks
-        this on its own otherwise, so a live connection looks disconnected
-        and the pin-channel checklist shows empty until Connect bot is
-        pressed again, even though nothing actually dropped.
-
-        Deliberately does not attempt a fresh connection: only resyncs an
-        existing one, so opening the page never connects the bot by itself.
-        """
-        if app.runtime and app.runtime.client.is_ready():
-            return connect_bot()
-        return gr.update(), gr.update(), gr.update()
-
-    def join_channel(label):
-        return note(app.join(label))
-
-    def leave_channel():
-        return note(app.leave())
-
     # ---- topic ------------------------------------------------------------
     def set_topic(text):
         """Editing the topic by hand drops the credit: it is no longer the
@@ -940,9 +914,9 @@ def build(app):
         u.c_refresh.click(lambda: (*selector_updates(), "Refreshed."),
                           None, sel_out + [u.c_status])
 
-        u.d_connect.click(connect_bot, None, [u.d_channel, u.m_rot_chans, u.sb_action])
-        u.d_join.click(join_channel, u.d_channel, u.sb_action)
-        u.d_leave.click(leave_channel, None, u.sb_action)
+        u.d_connect.click(bound(t_discord.connect_bot, app), None, [u.d_channel, u.m_rot_chans, u.sb_action])
+        u.d_join.click(bound(t_discord.join_channel, app), u.d_channel, u.sb_action)
+        u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
 
         # Speakers
         u.s_roster.change(load_speaker, u.s_roster,
@@ -1035,9 +1009,9 @@ def build(app):
         # Restore the channel lists on page load when the bot is already
         # connected, so a reload or an app restart that left the connection
         # up does not present an empty pin-channel checklist.
-        demo.load(resync_connection, None,
+        demo.load(bound(t_discord.resync_connection, app), None,
                   [u.d_channel, u.m_rot_chans, u.sb_action])
-        u.hdr_refresh.click(resync_connection, None,
+        u.hdr_refresh.click(bound(t_discord.resync_connection, app), None,
                             [u.d_channel, u.m_rot_chans, u.sb_action])
         demo.load(stream_status, None, outs)
         # Voice lists are read from the tts-server registry when the page is
