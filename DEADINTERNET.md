@@ -8,6 +8,37 @@ everyone present knows the voices are synthetic.**
 
 ---
 
+## Building
+
+The app needs **one** binary: it launches `build/tts-server` and then speaks
+HTTP to it. `qwen-tts`, `qwen-codec` and `quantize` are upstream's CLI tools —
+still built by the `build*.sh` scripts, still shipped in the Docker images,
+just never on this app's path.
+
+Configure once for your backend (this wipes `build/` and runs cmake):
+
+```bash
+./buildvulkan.sh
+```
+
+After that, rebuild just what the app uses:
+
+```bash
+./buildapp.sh
+```
+
+Python side, once:
+
+```bash
+python -m venv .venv-app && ./.venv-app/bin/pip install -r requirements-app.txt
+```
+
+`requirements-app.txt` pins gradio exactly. `deadinternet/ui.py` is written
+around four behaviours specific to 6.22, so treat a gradio upgrade as a change
+that needs the UI re-checked, not a routine bump.
+
+---
+
 ## Running the stack
 
 Three processes. Ollama is a systemd service and starts on boot; **the app
@@ -512,5 +543,8 @@ the next speaker sees it.
 | `deadinternet/director.py` | turn loop, modes, pre-generation, topics, stims |
 | `deadinternet/audio.py` | loudness normalisation, duration cap |
 | `deadinternet/ui.py` | Gradio interface |
+| `deadinternet/tests/` | smoke test: the Gradio page constructs, with every handler wired |
+| `buildapp.sh` | rebuild only `tts-server`, the one binary the app uses |
+| `requirements-app.txt` | Python dependencies, gradio pinned exactly |
 | `voices/` | reference clips (`voices/recovered/` = salvaged originals) |
 | `deadinternet.json` | roster + settings |
