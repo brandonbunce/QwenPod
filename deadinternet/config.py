@@ -9,9 +9,12 @@ import glob
 import json
 import os
 import re
+import subprocess
 import threading
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Tuple
+
+from .events import SPEECH as EV_SPEECH, EventLog
 
 # Above this the TTS server starts spilling and per-frame decode collapses --
 # measured 4.2 ms/frame with headroom vs 34 ms/frame at 99% VRAM.
@@ -46,6 +49,35 @@ def vram_info() -> Optional[Tuple[float, float]]:
         if total > 0 and (best is None or total > best[1]):
             best = (used / 1e9, total / 1e9)
     return best
+
+
+def gpu_busy_percent() -> Optional[int]:
+    """GPU utilisation 0-100, or None if it cannot be read.
+
+    Read straight from sysfs rather than shelling out. On AMD the amdgpu driver
+    exposes gpu_busy_percent, which is what radeontop samples anyway -- reading
+    the file is a few microseconds where spawning radeontop is tens of
+    milliseconds, and this runs on every status tick. nvidia-smi is used as a
+    fallback for NVIDIA cards, where there is no sysfs equivalent; it is only
+    reached when no amdgpu node exists, so the subprocess cost is not paid on
+    this machine.
+    """
+    for path in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
+        try:
+            with open(path) as f:
+                return max(0, min(100, int(f.read().strip())))
+        except (OSError, ValueError):
+            continue
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=2.0)
+        if out.returncode == 0 and out.stdout.strip():
+            return max(0, min(100, int(out.stdout.strip().splitlines()[0])))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VOICES_DIR = os.path.join(ROOT, "voices")
@@ -364,6 +396,11 @@ class State:
         # Set when a real user speaks in interactive mode; the director
         # drains this instead of continuing the podcast.
         self.pending_user: Optional[Turn] = None
+        # The Diagnostics event log. Owned by the app, attached here so
+        # add_turn can record spoken lines without every caller knowing about
+        # it. None is a working state -- a State built by a test or a script
+        # keeps its transcript and simply logs nothing.
+        self.events: Optional[EventLog] = None
         self.load()
 
     # ---- persistence -------------------------------------------------
@@ -444,6 +481,13 @@ class State:
             limit = self.settings.max_history * 4
             if len(self.transcript) > limit:
                 self.transcript = self.transcript[-limit:]
+        # Outside the lock: the log takes its own, and holding both in a fixed
+        # order here would be one more deadlock to reason about for no gain.
+        # Every spoken line goes through this method, so one hook catches the
+        # lot without touching the director's six call sites.
+        if self.events is not None:
+            who = "you" if turn.kind == "user" else turn.speaker
+            self.events.add(EV_SPEECH, f"{who}: {turn.text}")
 
     def recent(self, n: Optional[int] = None) -> List[Turn]:
         with self.lock:

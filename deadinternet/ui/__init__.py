@@ -6,5 +6,6 @@ this re-export is what keeps `from deadinternet.ui import build` working in
 app.py while the pieces move underneath it.
 """
 from .blocks import build
+from .style import APP_CSS
 
-__all__ = ["build"]
+__all__ = ["APP_CSS", "build"]

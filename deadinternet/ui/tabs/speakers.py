@@ -8,7 +8,8 @@ import soundfile as sf
 from ...config import PERSONA_SAMPLES, Speaker, VOICES_DIR
 from ..feed import MINE_POLL
 from ..feedback import note, warn
-from ..selectors import NEW, selector_updates, selectors_unchanged
+from ..selectors import (NEW, roster_choices, selector_updates,
+                         selectors_unchanged)
 
 
 def load_speaker(app, sel):
@@ -126,3 +127,30 @@ def build_persona(app, handle, current_name):
            note(f"Built a persona for {resolved} from {used} of {len(samples)} "
                 f"messages ({stats['scanned']:,} scanned). Read it over, then "
                 "press Save speaker."))
+
+
+def _step_roster(app, current, delta):
+    """Move the roster selection by one, wrapping at both ends.
+
+    The roster is a horizontal strip that scrolls sideways once there are more
+    speakers than fit; the arrows exist so it stays reachable without a
+    horizontal scroll gesture. Wrapping rather than clamping means holding one
+    arrow always eventually reaches everything.
+    """
+    names = [name for _, name in roster_choices(app)]
+    if not names:
+        return gr.update()
+    try:
+        i = names.index(current)
+    except ValueError:
+        # Nothing selected, or the selection was just deleted: start at the top.
+        return gr.update(value=names[0])
+    return gr.update(value=names[(i + delta) % len(names)])
+
+
+def roster_prev(app, current):
+    return _step_roster(app, current, -1)
+
+
+def roster_next(app, current):
+    return _step_roster(app, current, +1)

@@ -44,8 +44,10 @@ class FeedUpdate(NamedTuple):
     dbg_chat: Any
     dbg_norm: Any
     dbg_topic: Any
-    topic_box: Any     # Topic tab text box -- only pushed when it changed
+    topic_box: Any     # Inputs tab text box -- only pushed when it changed
     topic_from: Any    # ...and who pinned it, on the same check
+    services: Any      # Diagnostics: tts-server / LLM / this server
+    log: Any           # Diagnostics: the event log
 
 
 def queue_md(app):
@@ -108,6 +110,8 @@ def poll(app, last_topic=None):
         dbg_topic=app.topic_report(),
         topic_box=topic_up,
         topic_from=from_up,
+        services=app.service_report(),
+        log=app.events.render(),
     )
 
 

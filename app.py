@@ -18,12 +18,14 @@ import urllib.request
 
 from deadinternet.config import (ENV_PATH, PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
-                                 VRAM_WARN_FRACTION, State, load_env, vram_info)
+                                 VRAM_WARN_FRACTION, State, gpu_busy_percent,
+                                 load_env, vram_info)
+from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
                               OpenAIClient)
 from deadinternet.tts import TTSClient
-from deadinternet.ui import build
+from deadinternet.ui import APP_CSS, build
 
 # How long to wait for a freshly launched tts-server to answer.
 TTS_BOOT_TIMEOUT = 120
@@ -34,6 +36,10 @@ class DeadInternetApp:
         # Before anything reads DISCORD_TOKEN / OPENAI_API_KEY.
         self.env_file_found = load_env()
         self.state = State()
+        # Attached before anything can speak, so no line is missed. State keeps
+        # the reference so add_turn can log without its callers knowing.
+        self.events = EventLog()
+        self.state.events = self.events
         s = self.state.settings
         if args.tts:
             s.tts_url = args.tts
@@ -496,6 +502,8 @@ class DeadInternetApp:
         return "Stopped."
 
     def status_line(self):
+        """The header strip. Bullet-separated, because pipes read as table
+        syntax in markdown and the eye does not group on them."""
         bits = [f"mode: **{self.state.settings.mode}**"]
         if self.runtime and self.runtime.connected():
             n = self.runtime.occupants()[0]
@@ -508,7 +516,35 @@ class DeadInternetApp:
         if self.director:
             bits.append(f"director: {self.director.status}")
         bits.append(self.vram_line())
-        return " | ".join(bits)
+        busy = gpu_busy_percent()
+        if busy is not None:
+            bits.append(f"gpu: {busy}%")
+        return "  •  ".join(bits)
+
+    def service_report(self):
+        """Flat up/down list for the Diagnostics tab.
+
+        Deliberately three plain lines rather than prose: the question this
+        answers is "which of the three things is down", and that should be
+        readable at a glance without parsing a sentence.
+        """
+        alive = self.tts_alive()
+        rows = [("tts-server", alive,
+                 "" if alive else f"no answer at {self.state.settings.tts_url}")]
+        try:
+            ok, why = self.llm.available()
+        except Exception as e:
+            ok, why = False, str(e)
+        label = "ollama" if self.state.settings.provider == PROVIDER_OLLAMA else "openai"
+        rows.append((label, ok, "" if ok else (why or "unavailable")))
+        # This process answered, or you would not be reading this.
+        rows.append(("this server", True, ""))
+
+        out = []
+        for name, ok, detail in rows:
+            mark = "okay" if ok else "**down**"
+            out.append(f"- `{name}`: {mark}" + (f" — {detail}" if detail else ""))
+        return "\n".join(out)
 
     def voice_report(self):
         """Markdown block tracing the voice connection and who can hear it."""
@@ -628,7 +664,9 @@ def main():
     # take a couple of minutes to answer on a cold model.
     app.start_tts_boot(autostart=not args.no_tts_autostart)
     demo = build(app)
-    demo.queue(default_concurrency_limit=4).launch(server_name=args.host, server_port=args.port)
+    # css belongs to launch() in gradio 6, not the Blocks constructor.
+    demo.queue(default_concurrency_limit=4).launch(
+        server_name=args.host, server_port=args.port, css=APP_CSS)
     return 0
 
 

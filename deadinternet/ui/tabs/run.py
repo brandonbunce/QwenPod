@@ -1,4 +1,5 @@
 """Run tab: start and stop the conversation, and speak a line by hand."""
+from ...events import RUN, SETTING
 from ..feedback import note, warn
 
 
@@ -11,26 +12,34 @@ def set_enabled(app, names):
             if sp.ref_wav:
                 sp.enabled = sp.name in picked
     state.save()
+    app.events.add(SETTING, f"who's talking: {', '.join(sorted(picked)) or 'nobody'}")
     n = len(picked)
     return note(f"{n} speaker{'s' if n != 1 else ''} active"
                 + (f": {', '.join(sorted(picked))}" if 0 < n <= 6 else "."))
 
 
 def start_run(app):
-    return note(app.start_director())
+    msg = app.start_director()
+    app.events.add(RUN, f"start pressed - {msg}")
+    return note(msg)
 
 
 def stop_run(app):
-    return note(app.stop_director())
+    msg = app.stop_director()
+    app.events.add(RUN, f"stop pressed - {msg}")
+    return note(msg)
 
 
 def clear_context(app):
     if app.director:
         # Also drops the pre-generated turn, which was written against the
         # context we are throwing away.
-        return note(app.director.clear_context())
-    app.state.clear_transcript()
-    return note("LLM context cleared.")
+        msg = app.director.clear_context()
+    else:
+        app.state.clear_transcript()
+        msg = "LLM context cleared."
+    app.events.add(RUN, msg)
+    return note(msg)
 
 
 def manual_say(app, speaker, text):

@@ -1,59 +1,14 @@
-"""Generate and Clone tabs: register, delete and speak with a cloned voice."""
-import os
+"""Testing tab: refresh the voice list, and speak a line with a chosen voice.
 
+Registration used to live here too, behind a Clone tab. That tab is gone: the
+Speakers tab already registers a voice as part of saving a speaker, so having a
+second path that created voices with no persona attached was two ways to do one
+thing.
+"""
 import soundfile as sf
 
-from ...config import Speaker, VOICES_DIR
-from ..feedback import note, persist_clip, warn
-from ..selectors import NEW, selector_updates, selectors_unchanged
-
-
-def do_register(app, name, ref_audio, ref_text):
-    state, tts = app.state, app.tts
-    if not name or not name.strip():
-        return (*selectors_unchanged(), warn("Give the voice a name."))
-    if not ref_audio:
-        return (*selectors_unchanged(), warn("Upload a reference clip."))
-    name, ref_text = name.strip(), (ref_text or "").strip()
-
-    stored = persist_clip(name, ref_audio)
-    ok, msg = tts.register(name, stored, ref_text, force=True)
-    if not ok:
-        return (*selectors_unchanged(), warn(f"Registration failed - {msg}"))
-
-    # Record it so boot can re-register it. Keep any persona/enabled state if
-    # this name is already a Dead Internet speaker; otherwise park it disabled
-    # so it does not silently join conversations.
-    existing = state.get(name)
-    state.upsert(Speaker(
-        name=name, ref_wav=stored, ref_text=ref_text,
-        persona=existing.persona if existing else "",
-        enabled=existing.enabled if existing else False,
-        # Preserve tics; re-registering a clip must not wipe them.
-        stims=existing.stims if existing else "",
-        stim_chance=existing.stim_chance if existing else 0.0,
-    ))
-
-    mode = "ICL (with transcript)" if ref_text else "speaker-embedding only"
-    return (
-        *selector_updates(app, voice=name, sel=name),
-        note(f"Registered '{name}' - {mode}. Saved to `voices/{name}.wav`, "
-             "so it survives a tts-server restart."),
-    )
-
-
-def do_delete_voice(app, name):
-    state, tts = app.state, app.tts
-    if not name:
-        return (*selectors_unchanged(), warn("Nothing selected."))
-    tts.forget(name)
-    # Drop the saved clip too, or boot would resurrect it.
-    state.remove(name)
-    stored = os.path.join(VOICES_DIR, f"{name}.wav")
-    if os.path.exists(stored):
-        os.remove(stored)
-    return (*selector_updates(app, sel=NEW),
-            note(f"Removed '{name}' and deleted its saved clip."))
+from ..feedback import note, warn
+from ..selectors import selector_updates
 
 
 def refresh_voices(app):

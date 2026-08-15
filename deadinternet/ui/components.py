@@ -24,6 +24,18 @@ class DiagnosticsPanel:
     chat: Any
     norm: Any
     topic: Any
+    services: Any
+    log: Any
+    log_clear: Any
+
+
+@dataclass(frozen=True)
+class OutputsPanel:
+    """The Discord connection row, moved out of the header into its own tab."""
+    d_connect: Any
+    d_channel: Any
+    d_join: Any
+    d_leave: Any
 
 
 @dataclass(frozen=True)
@@ -44,25 +56,9 @@ class GeneratePanel:
 
 
 @dataclass(frozen=True)
-class ClonePanel:
-    c_name: Any
-    c_audio: Any
-    c_text: Any
-    c_list: Any
-    c_del: Any
-    c_status: Any
-    c_reg: Any
-    c_refresh: Any
-
-
-@dataclass(frozen=True)
 class HeaderPanel:
     sb_status: Any
     sb_action: Any
-    d_connect: Any
-    d_channel: Any
-    d_join: Any
-    d_leave: Any
     hdr_refresh: Any
 
 
@@ -72,6 +68,9 @@ class RunPanel:
     run_topic: Any
     r_enabled: Any
     run_queue: Any
+    run_inject: Any
+    run_inject_now: Any
+    run_inject_queue: Any
     r_transcript: Any
     r_start: Any
     r_stop: Any
@@ -85,6 +84,8 @@ class RunPanel:
 @dataclass(frozen=True)
 class SpeakersPanel:
     s_roster: Any
+    s_prev: Any
+    s_next: Any
     s_name: Any
     s_clip: Any
     s_reftext: Any

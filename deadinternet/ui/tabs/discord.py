@@ -1,12 +1,14 @@
 """Discord connection: connect, resync, join and leave a voice channel."""
 import gradio as gr
 
+from ...events import VOICE
 from ..feedback import note, warn
 
 
 def connect_bot(app):
     state = app.state
     ok, msg = app.connect_discord()
+    app.events.add(VOICE, f"connect bot - {msg}")
     labels = [c[0] for c in app.text_channel_choices()]
     return (gr.update(choices=[c[0] for c in app.channel_choices()]),
             gr.update(choices=labels,
@@ -30,8 +32,12 @@ def resync_connection(app):
 
 
 def join_channel(app, label):
-    return note(app.join(label))
+    msg = app.join(label)
+    app.events.add(VOICE, f"join {label} - {msg}")
+    return note(msg)
 
 
 def leave_channel(app):
-    return note(app.leave())
+    msg = app.leave()
+    app.events.add(VOICE, f"leave - {msg}")
+    return note(msg)

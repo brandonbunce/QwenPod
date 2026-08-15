@@ -22,15 +22,16 @@ from .feed import FeedUpdate
 from .feed import poll as _poll
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
-from .panels import (build_behaviour, build_clone, build_diagnostics,
-                     build_generate, build_header, build_run,
-                     build_speakers, build_topic)
+from .panels import (build_behaviour, build_diagnostics, build_generate,
+                     build_header, build_outputs, build_run, build_speakers,
+                     build_topic)
 from .selectors import SelectorUpdates
 from .selectors import roster_choices as _roster_choices
 from .selectors import selector_updates as _selector_updates
 from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
 from .tabs import behaviour as t_behaviour
+from .tabs import diagnostics as t_diagnostics
 from .tabs import discord as t_discord
 from .tabs import run as t_run
 from .tabs import speakers as t_speakers
@@ -89,134 +90,124 @@ def build(app):
 
 
     # ---- layout -------------------------------------------------------------
-    with gr.Blocks(title="qwentts.cpp") as demo:
-        gr.Markdown(f"# qwentts.cpp\n{app.banner()}")
+    with gr.Blocks(title="QwenPod") as demo:
+        header = build_header(app)
+        u.sb_status = header.sb_status
+        u.sb_action = header.sb_action
+        u.hdr_refresh = header.hdr_refresh
 
-        with gr.Tab("Generate"):
-            gen = build_generate(init_voices)
-            u.g_text = gen.g_text
-            u.g_instruct = gen.g_instruct
-            u.g_go = gen.g_go
-            u.g_audio = gen.g_audio
-            u.g_status = gen.g_status
-            u.g_voice = gen.g_voice
-            u.g_refresh = gen.g_refresh
-            u.g_temp = gen.g_temp
-            u.g_topk = gen.g_topk
-            u.g_topp = gen.g_topp
-            u.g_rep = gen.g_rep
-            u.g_seed = gen.g_seed
-            u.g_max = gen.g_max
-        with gr.Tab("Clone a voice"):
-            clone = build_clone(init_voices)
-            u.c_name = clone.c_name
-            u.c_audio = clone.c_audio
-            u.c_text = clone.c_text
-            u.c_list = clone.c_list
-            u.c_del = clone.c_del
-            u.c_status = clone.c_status
-            u.c_reg = clone.c_reg
-            u.c_refresh = clone.c_refresh
-
-        with gr.Tab("Dead Internet Mode"):
-            gr.Markdown(
-                "Populate a voice channel with cloned personas driven by an LLM. "
-                "**Only clone people who agreed to it, and keep the channel to people "
-                "who know the voices are synthetic.** Real people join in by "
-                "**typing in a text channel** - there is no speech recognition."
-            )
-            header = build_header(app)
-            u.sb_status = header.sb_status
-            u.sb_action = header.sb_action
-            u.d_connect = header.d_connect
-            u.d_channel = header.d_channel
-            u.d_join = header.d_join
-            u.d_leave = header.d_leave
-            u.hdr_refresh = header.hdr_refresh
-            with gr.Tabs():
-                with gr.Tab("Run"):
-                    run = build_run(app, init_names)
-                    u.m_mode = run.m_mode
-                    u.run_topic = run.run_topic
-                    u.r_enabled = run.r_enabled
-                    u.run_queue = run.run_queue
-                    u.r_transcript = run.r_transcript
-                    u.r_start = run.r_start
-                    u.r_stop = run.r_stop
-                    u.r_clear = run.r_clear
-                    u.r_rotate = run.r_rotate
-                    u.man_speaker = run.man_speaker
-                    u.man_text = run.man_text
-                    u.man_go = run.man_go
-                with gr.Tab("Speakers"):
-                    speakers = build_speakers(app)
-                    u.s_roster = speakers.s_roster
-                    u.s_name = speakers.s_name
-                    u.s_clip = speakers.s_clip
-                    u.s_reftext = speakers.s_reftext
-                    u.s_persona = speakers.s_persona
-                    u.s_stims = speakers.s_stims
-                    u.s_stim_pct = speakers.s_stim_pct
-                    u.s_save = speakers.s_save
-                    u.s_delete = speakers.s_delete
-                    u.s_handle = speakers.s_handle
-                    u.s_mine = speakers.s_mine
-                with gr.Tab("Topic and pins"):
-                    topic = build_topic(app)
-                    u.m_topic_from = topic.m_topic_from
-                    u.topic_queue_md = topic.topic_queue_md
-                    u.m_topic = topic.m_topic
-                    u.m_rotate = topic.m_rotate
-                    u.m_rot_mins = topic.m_rot_mins
-                    u.m_rot_clear = topic.m_rot_clear
-                    u.m_rot_say = topic.m_rot_say
-                    u.m_rot_instant = topic.m_rot_instant
-                    u.m_topic_now = topic.m_topic_now
-                    u.m_topic_queue = topic.m_topic_queue
-                    u.w_pins = topic.w_pins
-                    u.m_rot_chans = topic.m_rot_chans
-                    u.m_images = topic.m_images
-                    u.w_web = topic.w_web
-                    u.web_subjects = topic.web_subjects
-                    u.web_n = topic.web_n
-                    u.w_crowd = topic.w_crowd
-                    u.crowd_pending = topic.crowd_pending
-                    u.m_seed = topic.m_seed
-                    u.m_reseed = topic.m_reseed
-                    u.m_rot_next = topic.m_rot_next
-                    u.crowd_clear = topic.crowd_clear
-                    u.crowd_max = topic.crowd_max
-                with gr.Tab("Behaviour"):
-                    behaviour = build_behaviour(app)
-                    u.m_reset = behaviour.m_reset
-                    u.m_open_on = behaviour.m_open_on
-                    u.m_open_tpl = behaviour.m_open_tpl
-                    u.m_topic_tpl = behaviour.m_topic_tpl
-                    u.m_topic_img_tpl = behaviour.m_topic_img_tpl
-                    u.m_bye_on = behaviour.m_bye_on
-                    u.m_bye_tpl = behaviour.m_bye_tpl
-                    u.m_provider = behaviour.m_provider
-                    u.m_refresh_models = behaviour.m_refresh_models
-                    u.m_model = behaviour.m_model
-                    u.m_oa_model = behaviour.m_oa_model
-                    u.m_gap = behaviour.m_gap
-                    u.m_temp = behaviour.m_temp
-                    u.m_pred = behaviour.m_pred
-                    u.m_hist = behaviour.m_hist
-                    u.m_norm = behaviour.m_norm
-                    u.m_dbfs = behaviour.m_dbfs
-                    u.m_cap_on = behaviour.m_cap_on
-                    u.m_cap_sec = behaviour.m_cap_sec
-                    u.m_barge = behaviour.m_barge
-                    u.m_rejoin = behaviour.m_rejoin
-                    u.m_pause_empty = behaviour.m_pause_empty
-                with gr.Tab("Diagnostics"):
-                    diag = build_diagnostics()
-                    # Shim: the wiring block below still reads u.*, so each
-                    # panel's fields are copied back onto it. Removed per panel
-                    # as the wiring is split up.
-                    (u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic) = (
-                        diag.voice, diag.chat, diag.norm, diag.topic)
+        with gr.Tabs():
+            with gr.Tab("Run"):
+                run = build_run(app, init_names)
+                u.m_mode = run.m_mode
+                u.run_topic = run.run_topic
+                u.r_enabled = run.r_enabled
+                u.run_queue = run.run_queue
+                u.run_inject = run.run_inject
+                u.run_inject_now = run.run_inject_now
+                u.run_inject_queue = run.run_inject_queue
+                u.r_transcript = run.r_transcript
+                u.r_start = run.r_start
+                u.r_stop = run.r_stop
+                u.r_clear = run.r_clear
+                u.r_rotate = run.r_rotate
+                u.man_speaker = run.man_speaker
+                u.man_text = run.man_text
+                u.man_go = run.man_go
+            with gr.Tab("Speakers"):
+                speakers = build_speakers(app)
+                u.s_roster = speakers.s_roster
+                u.s_prev = speakers.s_prev
+                u.s_next = speakers.s_next
+                u.s_name = speakers.s_name
+                u.s_clip = speakers.s_clip
+                u.s_reftext = speakers.s_reftext
+                u.s_persona = speakers.s_persona
+                u.s_stims = speakers.s_stims
+                u.s_stim_pct = speakers.s_stim_pct
+                u.s_save = speakers.s_save
+                u.s_delete = speakers.s_delete
+                u.s_handle = speakers.s_handle
+                u.s_mine = speakers.s_mine
+            with gr.Tab("Inputs"):
+                topic = build_topic(app)
+                u.m_topic_from = topic.m_topic_from
+                u.topic_queue_md = topic.topic_queue_md
+                u.m_topic = topic.m_topic
+                u.m_rotate = topic.m_rotate
+                u.m_rot_mins = topic.m_rot_mins
+                u.m_rot_clear = topic.m_rot_clear
+                u.m_rot_say = topic.m_rot_say
+                u.m_rot_instant = topic.m_rot_instant
+                u.m_topic_now = topic.m_topic_now
+                u.m_topic_queue = topic.m_topic_queue
+                u.w_pins = topic.w_pins
+                u.m_rot_chans = topic.m_rot_chans
+                u.m_images = topic.m_images
+                u.w_web = topic.w_web
+                u.web_subjects = topic.web_subjects
+                u.web_n = topic.web_n
+                u.w_crowd = topic.w_crowd
+                u.crowd_pending = topic.crowd_pending
+                u.m_seed = topic.m_seed
+                u.m_reseed = topic.m_reseed
+                u.m_rot_next = topic.m_rot_next
+                u.crowd_clear = topic.crowd_clear
+                u.crowd_max = topic.crowd_max
+            with gr.Tab("Outputs"):
+                outputs = build_outputs(app)
+                u.d_connect = outputs.d_connect
+                u.d_channel = outputs.d_channel
+                u.d_join = outputs.d_join
+                u.d_leave = outputs.d_leave
+            with gr.Tab("Behaviour"):
+                behaviour = build_behaviour(app)
+                u.m_reset = behaviour.m_reset
+                u.m_open_on = behaviour.m_open_on
+                u.m_open_tpl = behaviour.m_open_tpl
+                u.m_topic_tpl = behaviour.m_topic_tpl
+                u.m_topic_img_tpl = behaviour.m_topic_img_tpl
+                u.m_bye_on = behaviour.m_bye_on
+                u.m_bye_tpl = behaviour.m_bye_tpl
+                u.m_provider = behaviour.m_provider
+                u.m_refresh_models = behaviour.m_refresh_models
+                u.m_model = behaviour.m_model
+                u.m_oa_model = behaviour.m_oa_model
+                u.m_gap = behaviour.m_gap
+                u.m_temp = behaviour.m_temp
+                u.m_pred = behaviour.m_pred
+                u.m_hist = behaviour.m_hist
+                u.m_norm = behaviour.m_norm
+                u.m_dbfs = behaviour.m_dbfs
+                u.m_cap_on = behaviour.m_cap_on
+                u.m_cap_sec = behaviour.m_cap_sec
+                u.m_barge = behaviour.m_barge
+                u.m_rejoin = behaviour.m_rejoin
+                u.m_pause_empty = behaviour.m_pause_empty
+            with gr.Tab("Testing"):
+                gen = build_generate(init_voices)
+                u.g_text = gen.g_text
+                u.g_instruct = gen.g_instruct
+                u.g_go = gen.g_go
+                u.g_audio = gen.g_audio
+                u.g_status = gen.g_status
+                u.g_voice = gen.g_voice
+                u.g_refresh = gen.g_refresh
+                u.g_temp = gen.g_temp
+                u.g_topk = gen.g_topk
+                u.g_topp = gen.g_topp
+                u.g_rep = gen.g_rep
+                u.g_seed = gen.g_seed
+                u.g_max = gen.g_max
+            with gr.Tab("Diagnostics"):
+                diag = build_diagnostics(app)
+                u.dbg_voice = diag.voice
+                u.dbg_chat = diag.chat
+                u.dbg_norm = diag.norm
+                u.dbg_topic = diag.topic
+                u.dbg_services = diag.services
+                u.dbg_log = diag.log
+                u.dbg_log_clear = diag.log_clear
 
         # ---- wiring ---------------------------------------------------------
         # Constructed here, not at the top of build(): it needs the action line,
@@ -233,19 +224,14 @@ def build(app):
                       u.g_rep, u.g_seed, u.g_max],
                      [u.g_audio, u.g_status])
 
-        # Every mutation refreshes all five selectors, so nothing on another
+        # Every mutation refreshes all four selectors, so nothing on another
         # tab goes stale until the app restarts.
         # Order here is the contract with SelectorUpdates: same arity but the
         # wrong order raises nothing, it just lands each update in the wrong
         # control. Assert what can be asserted; the field names carry the rest.
-        sel_out = [u.g_voice, u.c_list, u.s_roster, u.man_speaker, u.r_enabled]
+        sel_out = [u.g_voice, u.s_roster, u.man_speaker, u.r_enabled]
         assert len(sel_out) == len(SelectorUpdates._fields)
         u.g_refresh.click(bound(t_voices.refresh_voices, app), None, sel_out + [u.g_status])
-        u.c_reg.click(bound(t_voices.do_register, app), [u.c_name, u.c_audio, u.c_text], sel_out + [u.c_status])
-        u.c_del.click(bound(t_voices.do_delete_voice, app), u.c_list, sel_out + [u.c_status])
-        u.c_refresh.click(lambda: (*selector_updates(), "Refreshed."),
-                          None, sel_out + [u.c_status])
-
         u.d_connect.click(bound(t_discord.connect_bot, app), None, [u.d_channel, u.m_rot_chans, u.sb_action])
         u.d_join.click(bound(t_discord.join_channel, app), u.d_channel, u.sb_action)
         u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
@@ -262,6 +248,9 @@ def build(app):
         u.s_mine.click(bound(t_speakers.build_persona, app), [u.s_handle, u.s_name],
                        [u.s_name, u.s_persona, u.sb_action])
 
+        u.s_prev.click(bound(t_speakers.roster_prev, app), u.s_roster, u.s_roster)
+        u.s_next.click(bound(t_speakers.roster_next, app), u.s_roster, u.s_roster)
+
         # Run
         u.r_start.click(bound(t_run.start_run, app), None, u.sb_action)
         u.r_stop.click(bound(t_run.stop_run, app), None, u.sb_action)
@@ -271,6 +260,16 @@ def build(app):
         u.r_enabled.change(bound(t_run.set_enabled, app), u.r_enabled, u.sb_action)
         u.man_text.submit(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
         u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
+        # Same two handlers the Inputs tab uses; they take the text as an
+        # argument, so a second box on this tab needs nothing else.
+        u.run_inject_now.click(bound(t_topic.switch_to_typed, app),
+                               u.run_inject, u.sb_action)
+        u.run_inject_queue.click(bound(t_topic.queue_typed, app),
+                                 u.run_inject, u.sb_action)
+
+        # Diagnostics
+        u.dbg_log_clear.click(bound(t_diagnostics.clear_log, app), None,
+                              [u.dbg_log, u.sb_action])
 
         # Topic. The topic box has its own handler because an edit also drops
         # the "pinned by" credit; the rest are plain autosaves.
@@ -331,7 +330,8 @@ def build(app):
         outs = [u.sb_status, u.r_transcript, u.run_topic, u.run_queue,
                 u.topic_queue_md, u.crowd_pending,
                 u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic,
-                u.m_topic, u.m_topic_from]
+                u.m_topic, u.m_topic_from,
+                u.dbg_services, u.dbg_log]
         assert len(outs) == len(FeedUpdate._fields)
         assert u.sb_action not in outs, "the feed must never write the action line"
         # Wrapped so gradio sees a zero-argument callable: an explicit refresh

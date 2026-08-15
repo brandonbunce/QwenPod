@@ -2,6 +2,7 @@
 import gradio as gr
 
 from ..feed import crowd_md
+from ...events import TOPIC
 from ..feedback import note, warn
 
 
@@ -18,6 +19,7 @@ def set_topic(app, text):
         if changed:
             state.settings.topic_author = ""
     state.save()
+    app.events.add(TOPIC, f"topic set by hand: {typed}")
     return gr.update(value=""), f"Topic set: **{typed[:80]}**"
 
 

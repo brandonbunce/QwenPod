@@ -7,6 +7,7 @@ different save behaviours and no way to tell which applied to what.
 Autosave holds the two things every binding needs -- the app, and the action
 line every save reports to -- so the ~30 call sites stay one line each.
 """
+from ..events import SETTING as EV_SETTING
 
 
 class Autosave:
@@ -28,6 +29,7 @@ class Autosave:
             with state.lock:
                 setattr(state.settings, field, cast(value) if cast else value)
             state.save()
+            self.app.events.add(EV_SETTING, f"{label} -> {value}")
             extra = after() if after else None
             shown = value if not isinstance(value, str) else value.strip()[:60]
             return f"Saved **{label}**: {shown}" + (f" - {extra}" if extra else "")

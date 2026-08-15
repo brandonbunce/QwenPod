@@ -1,15 +1,13 @@
-"""User feedback, and the two helpers that depend on nothing else.
+"""User feedback, and the helpers that depend on nothing else.
 
 These were nested inside build() but closed over nothing from it, so they lift
 out unchanged -- same names, same signatures, same bodies.
 """
-import os
 import re
 
 import gradio as gr
-import soundfile as sf
 
-from ..config import TEMPLATE_VARS, VOICES_DIR
+from ..config import TEMPLATE_VARS
 
 _MD = re.compile(r"[*`_]+")
 
@@ -37,16 +35,3 @@ def tpl_vars(field):
     """The {placeholders} a template box accepts, for its tooltip."""
     pairs = TEMPLATE_VARS.get(field, {})
     return "Variables: " + ", ".join(f"{k} = {v}" for k, v in pairs.items())
-
-
-def persist_clip(name, ref_audio):
-    """Copy a reference clip into voices/ as mono WAV and return the path.
-
-    The server only keeps registrations in memory, so without a clip on disk a
-    restart loses the clone for good.
-    """
-    os.makedirs(VOICES_DIR, exist_ok=True)
-    stored = os.path.join(VOICES_DIR, f"{name}.wav")
-    data, sr = sf.read(ref_audio, always_2d=True)
-    sf.write(stored, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
-    return stored

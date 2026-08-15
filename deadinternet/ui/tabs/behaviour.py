@@ -3,6 +3,7 @@ import gradio as gr
 
 from ...config import MODE_MANUAL, RECOMMENDED
 from ...llm import PROVIDER_OPENAI
+from ...events import SETTING
 from ..feedback import note, warn
 
 
@@ -15,6 +16,7 @@ def set_mode(app, m):
     # on its next pass.
     if m == MODE_MANUAL and app.runtime:
         app.runtime.interrupt()
+    app.events.add(SETTING, f"mode -> {m}")
     return note(f"Mode: **{m}**.")
 
 

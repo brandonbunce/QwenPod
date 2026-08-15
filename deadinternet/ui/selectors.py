@@ -1,11 +1,11 @@
 """The controls that list voices or speakers, and the one update that feeds them.
 
-Five controls across four tabs read from two different sources -- the
+Four controls across three tabs read from two different sources -- the
 tts-server registry and the saved roster -- so refreshing only the one next to
 the button you pressed left the others stale until the app restarted. Every
 mutation therefore returns a full set.
 
-The set used to be a bare 5-tuple with a comment naming the order, and a
+The set used to be a bare tuple with a comment naming the order, and a
 separate `SELECTORS = 5` a thousand lines from the output list it had to agree
 with. Both are gone: SelectorUpdates names its fields, so a mis-ordered return
 is visible at the call site instead of silently filling the voice dropdown with
@@ -24,9 +24,8 @@ class SelectorUpdates(NamedTuple):
     The field order is the contract with UI.selector_outputs(); an assert in
     build() checks the two agree on length, and the names carry the rest.
     """
-    voice: Any     # Generate tab: which voice to speak as
-    clone: Any     # Clone tab: registered voices, for deletion
-    roster: Any    # Speakers tab: the roster radio
+    voice: Any     # Testing tab: which voice to speak as
+    roster: Any    # Speakers tab: the roster strip
     manual: Any    # Run tab: "say a line as"
     enabled: Any   # Run tab: who is talking (choices and ticks both move)
 
@@ -74,7 +73,6 @@ def selector_updates(app, voice=None, sel=None, man=None):
     pick = lambda v: {"value": v} if v is not None else {}
     return SelectorUpdates(
         voice=gr.update(choices=vc, **pick(voice)),
-        clone=gr.update(choices=vc, **pick(voice)),
         roster=gr.update(choices=roster_choices(app), **pick(sel)),
         manual=gr.update(choices=names, **pick(man)),
         enabled=gr.update(choices=[s.name for s in state.restorable()],

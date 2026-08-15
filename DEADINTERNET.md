@@ -1,6 +1,6 @@
-# Dead Internet Mode
+# QwenPod — Dead Internet Mode
 
-Web UI for qwentts.cpp: voice cloning, plus a Discord bot that fills a voice
+QwenPod: a web UI over qwentts.cpp with a Discord bot that fills a voice
 channel with cloned personas driven by a local or remote LLM.
 
 **Only clone people who agreed to it, and keep the bot to channels where
@@ -33,7 +33,7 @@ Python side, once:
 python -m venv .venv-app && ./.venv-app/bin/pip install -r requirements-app.txt
 ```
 
-`requirements-app.txt` pins gradio exactly. `deadinternet/ui.py` is written
+`requirements-app.txt` pins gradio exactly. `deadinternet/ui/` is written
 around four behaviours specific to 6.22, so treat a gradio upgrade as a change
 that needs the UI re-checked, not a routine bump.
 
@@ -60,7 +60,7 @@ Then open <http://127.0.0.1:7860>. The web UI is serving within a second or
 two; tts-server comes up behind it and the roster is re-registered as soon as
 it answers (roughly 30s for 23 voices). Watch the log on **Diagnostics** —
 `[tts] server up` then `[boot] restored n/n voices`. Until that lands, voice
-dropdowns are empty; **Refresh voices** on the Generate tab repairs them at
+dropdowns are empty; **Refresh voices** on the Testing tab repairs them at
 any time.
 
 To run it detached instead of holding a terminal:
@@ -109,7 +109,7 @@ the app cannot tell — registrations live only in the server's memory, so it
 still believes every voice is live. Two ways back:
 
 - **Start** on the Run tab launches it if port 8080 is dead, same as boot does.
-- **Refresh voices** on the Generate tab re-uploads the roster to a server that
+- **Refresh voices** on the Testing tab re-uploads the roster to a server that
   came back empty.
 
 Both wait up to 120s and log to `tts-server.log`. Restarting the app does both
@@ -143,15 +143,29 @@ process; freeing VRAM afterwards does nothing. You must restart tts-server.
 
 ## The interface
 
-The Dead Internet Mode tab is a persistent header over five sub-tabs:
+A persistent masthead over seven tabs:
 
 ```
-status bar     streamed — running · mode · voice · listeners · vram
+QwenPod        mode • voice • listeners • director • vram • gpu     [Refresh]
 action line    the last thing you did, and why it did or didn't work
-connection     Connect bot · voice channel · Join · Leave · Refresh
 ─────────────────────────────────────────────────────────────────────
-Run · Speakers · Topic and pins · Behaviour · Diagnostics
+Run · Speakers · Inputs · Outputs · Behaviour · Testing · Diagnostics
 ```
+
+The status strip streams and lives above the tabs, so mode and VRAM stay on
+screen wherever you are — a stalled director or a full card is easiest to miss
+exactly when you are looking at some other tab. The action line below it does
+**not** stream: it holds your last action's result until you do something else.
+
+| Tab | What it holds |
+| --- | --- |
+| `Run` | transport, mode, current topic and who's talking on the left; the queue, topic injection, transcript and "say a line as" on the right |
+| `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
+| `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
+| `Outputs` | where the audio goes. Connect the bot and join a voice channel here |
+| `Behaviour` | LLM backend, conversation tuning, spoken templates |
+| `Testing` | speak arbitrary text in a chosen voice, with the raw sampling knobs |
+| `Diagnostics` | service status and the event log on the left, subsystem reports on the right |
 
 Two conventions worth knowing:
 
@@ -192,9 +206,9 @@ Each is a cloned voice + a system prompt. Reference clips are copied into
 holds registered voices in memory only** — they vanish on restart. The app
 re-registers the whole roster at boot from those files.
 
-Cloning from *either* tab persists. A voice cloned in the Clone tab is parked
-`enabled: false` so it's available in Generate but won't silently join
-conversations until you give it a persona.
+Saving a speaker registers its clip with tts-server, so there is one path that
+creates a voice rather than two. A speaker with no persona is parked
+`enabled: false` and will not join conversations until you tick it on **Run**.
 
 5–10s of clean audio makes a good reference. Supplying the transcript enables
 ICL mode, which tracks the reference more closely than speaker-embedding-only.
@@ -246,9 +260,9 @@ phrase is awkward to work into a sentence naturally.
 
 ---
 
-## Topic and pins
+## Inputs
 
-The **Topic and pins** tab holds everything about what they talk about. The
+The **Inputs** tab holds everything about what they talk about. The
 **Topic** box is the live topic: rotation overwrites it, and the status feed
 pushes the new value back into the box, so it always shows what is actually
 being discussed. The feed only pushes when the value actually changed —
@@ -542,7 +556,8 @@ the next speaker sees it.
 | `deadinternet/bot.py` | Discord runtime, playback, chat input, pins, history mining |
 | `deadinternet/director.py` | turn loop, modes, pre-generation, topics, stims |
 | `deadinternet/audio.py` | loudness normalisation, duration cap |
-| `deadinternet/ui.py` | Gradio interface |
+| `deadinternet/ui/` | Gradio interface: panels, per-tab handlers, styling |
+| `deadinternet/events.py` | in-memory event log shown on Diagnostics |
 | `deadinternet/tests/` | smoke test: the Gradio page constructs, with every handler wired |
 | `buildapp.sh` | rebuild only `tts-server`, the one binary the app uses |
 | `requirements-app.txt` | Python dependencies, gradio pinned exactly |
