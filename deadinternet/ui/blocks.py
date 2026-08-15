@@ -13,32 +13,28 @@ Layout notes, because gradio 6.22 constrains this more than it looks:
   * The status bar streams; the action line does not. Writing both from the
     feed is what used to wipe every button's confirmation within 1.5s.
 """
-import os
-import time
-
 import gradio as gr
-import soundfile as sf
 
-from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
-                      RECOMMENDED, Speaker, VOICES_DIR)
-from ..llm import PROVIDER_OPENAI, PROVIDERS
+from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
+from ..llm import PROVIDERS
 from .autoscroll import AUTOSCROLL_JS
 from .autosave import Autosave
 from .binding import bound
-from .feed import MINE_POLL, FeedUpdate
-from .feed import crowd_md as _crowd_md
+from .feed import FeedUpdate
 from .feed import poll as _poll
-from .feed import queue_md as _queue_md
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
-from .feedback import note, persist_clip, tpl_vars, warn
-from .selectors import NEW, SelectorUpdates, selectors_unchanged
+from .feedback import tpl_vars
+from .selectors import NEW, SelectorUpdates
 from .selectors import roster_choices as _roster_choices
 from .selectors import selector_updates as _selector_updates
 from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
+from .tabs import behaviour as t_behaviour
 from .tabs import discord as t_discord
+from .tabs import run as t_run
 from .tabs import speakers as t_speakers
+from .tabs import topic as t_topic
 from .tabs import voices as t_voices
 
 
@@ -68,198 +64,6 @@ def build(app):
         return _selector_updates(app, voice, sel, man)
 
     # ---- cloning tab ------------------------------------------------------
-    # ---- topic ------------------------------------------------------------
-    def set_topic(text):
-        """Editing the topic by hand drops the credit: it is no longer the
-        pinned message somebody posted."""
-        typed = (text or "").strip()
-        if not typed:
-            return gr.update(), "Topic left unchanged."
-        with state.lock:
-            changed = typed != state.settings.topic
-            state.settings.topic = typed
-            if changed:
-                state.settings.topic_author = ""
-        state.save()
-        return gr.update(value=""), f"Topic set: **{typed[:80]}**"
-
-    def set_pin_channels(labels):
-        """The checklist is empty until the bot connects and fills in the
-        channel names. Saving that empty list would silently throw away the
-        selection from the last session."""
-        if not app.text_channel_choices():
-            n = len(state.settings.topic_channel_ids)
-            return (f"Bot not connected - keeping the {n} pin channel(s) from "
-                    "last session.")
-        with state.lock:
-            state.settings.topic_channel_ids = app.text_channel_ids(labels)
-        state.save()
-        # A topic prefetched from the old pool is no longer representative.
-        if app.director:
-            app.director._discard_prepared()
-        n = len(state.settings.topic_channel_ids)
-        if state.settings.topic_rotation and not n:
-            return "**Rotation is on but no pin channels are ticked** - nothing will rotate."
-        return f"Pin pool: **{n} channel{'s' if n != 1 else ''}**."
-
-    def set_enabled(names):
-        """One-press enable/disable straight from the Run tab."""
-        picked = set(names or [])
-        with state.lock:
-            for sp in state.speakers:
-                if sp.ref_wav:
-                    sp.enabled = sp.name in picked
-        state.save()
-        n = len(picked)
-        return note(f"{n} speaker{'s' if n != 1 else ''} active"
-                    + (f": {', '.join(sorted(picked))}" if 0 < n <= 6 else "."))
-
-    def queue_md():
-        return _queue_md(app)
-
-    def crowd_md():
-        return _crowd_md(app)
-
-    def clear_crowd():
-        with state.lock:
-            n = len(state.settings.crowd_topics)
-            state.settings.crowd_topics = []
-        state.save()
-        return note(f"Cleared {n} submitted topic(s)."), crowd_md()
-
-    def switch_to_typed(text):
-        """Make whatever is in the Topic box the topic, right now."""
-        typed = (text or "").strip()
-        if not typed:
-            return warn("Type a topic in the box first.")
-        if not app.director:
-            return warn("Connect the bot first.")
-        try:
-            changed, queued = app.director.switch_to_topic(typed)
-        except Exception as e:
-            return warn(f"Failed - {e}")
-        if queued:
-            return note(f"Switching to your topic {queued}.")
-        if not changed:
-            d = app.director.topic_debug
-            return warn(f"No switch - {d.get('last_error') or 'unknown'}.")
-        return note(f"Topic now: **{typed[:70]}**")
-
-    def queue_typed(text):
-        """Line the typed topic up to replace the next pin, without cutting in."""
-        typed = (text or "").strip()
-        if not typed:
-            return warn("Type a topic in the box first.")
-        if not app.director:
-            return warn("Connect the bot first.")
-        app.director.queue_topic(typed)
-        if state.settings.topic_rotation:
-            mins = state.settings.topic_interval_minutes
-            return note(f"Queued **{typed[:60]}** - it replaces the next pin "
-                        f"(within {mins:g} min).")
-        return note(f"Queued **{typed[:60]}**, but rotation is off so nothing will "
-                    "fire it. Use Switch to this now, or tick Rotate topic.")
-
-    def reseed_now():
-        if not app.director:
-            return warn("Connect the bot first.")
-        seed = app.director.reseed(state.settings.rng_seed or None)
-        return note(f"Reshuffled - seed {seed}. Next cycle uses a new pin order.")
-
-    def rotate_now():
-        if not app.director:
-            return warn("Connect the bot first.")
-        try:
-            changed, msg = app.director.rotate_topic_now()
-        except Exception as e:
-            return warn(f"Failed - {e}")
-        if msg:
-            return note(f"Topic switch {msg}.")
-        d = app.director.topic_debug
-        if not changed:
-            return warn(f"No switch - {d.get('last_error') or 'no pins found'}.")
-        return note(f"Topic now: {d.get('current')}")
-
-    # ---- settings ---------------------------------------------------------
-    def set_mode(m):
-        with state.lock:
-            state.settings.mode = m
-        state.save()
-        # Cut the line that is mid-playback; the loop drops the pre-generated
-        # one on its next pass.
-        if m == MODE_MANUAL and app.runtime:
-            app.runtime.interrupt()
-        return note(f"Mode: **{m}**.")
-
-    def rebuild_note():
-        """Swap the backend in place so a running director picks it up on its
-        next turn without a restart."""
-        active = app.rebuild_llm()
-        ok, why = active.available()
-        return f"{state.settings.provider}: {active.model}" if ok else f"**{why}**"
-
-    def reset_tuning():
-        """Put the four conversation-tuning controls back to values that are
-        known to sound right."""
-        with state.lock:
-            s = state.settings
-            s.gap_seconds = RECOMMENDED["gap_seconds"]
-            s.temperature = RECOMMENDED["temperature"]
-            s.num_predict = RECOMMENDED["num_predict"]
-            s.max_history = RECOMMENDED["max_history"]
-        state.save()
-        return (
-            gr.update(value=RECOMMENDED["gap_seconds"]),
-            gr.update(value=RECOMMENDED["temperature"]),
-            gr.update(value=RECOMMENDED["num_predict"]),
-            gr.update(value=RECOMMENDED["max_history"]),
-            note("Tuning reset to recommended and saved."),
-        )
-
-    def refresh_models(provider):
-        probe = app.make_client(provider)
-        found = probe.models()
-        if not found:
-            ok, why = probe.available()
-            return gr.update(), gr.update(), warn(why or "No models returned.")
-        if provider == PROVIDER_OPENAI:
-            return gr.update(), gr.update(choices=found), note(f"{len(found)} OpenAI models.")
-        return gr.update(choices=found), gr.update(), note(f"{len(found)} Ollama models.")
-
-    # ---- run --------------------------------------------------------------
-    def start_run():
-        return note(app.start_director())
-
-    def stop_run():
-        return note(app.stop_director())
-
-    def clear_context():
-        if app.director:
-            # Also drops the pre-generated turn, which was written against the
-            # context we are throwing away.
-            return note(app.director.clear_context())
-        state.clear_transcript()
-        return note("LLM context cleared.")
-
-    def manual_say(speaker, text):
-        if not speaker:
-            return warn("Pick a speaker.")
-        if not text or not text.strip():
-            return warn("Type something for them to say.")
-
-        # Say starts the director itself -- no need to press Start first.
-        ok, msg = app.try_start()
-        if not ok:
-            return warn(msg)
-        if not (app.runtime and app.runtime.connected()):
-            return warn("Not in a voice channel - join one at the top, or nobody "
-                        "will hear it.")
-        try:
-            app.director.say_now(speaker, text.strip())
-        except Exception as e:
-            return warn(f"Failed - {e}")
-        return note(f"{msg}Queued for {speaker}.")
-
     # ---- live feed --------------------------------------------------------
     def poll(last_topic=None):
         return _poll(app, last_topic)
@@ -695,6 +499,9 @@ def build(app):
         # which does not exist until panel_header() has run above.
         saver = Autosave(app, u.sb_action)
         bind = saver.bind
+        # `after=` callbacks take no arguments, so they need the same app
+        # binding the event handlers get.
+        _rebuild_note = bound(t_behaviour.rebuild_note, app)
 
         u.g_go.click(bound(t_voices.do_synth, app),
                      [u.g_text, u.g_voice, u.g_instruct,
@@ -732,31 +539,31 @@ def build(app):
                        [u.s_name, u.s_persona, u.sb_action])
 
         # Run
-        u.r_start.click(start_run, None, u.sb_action)
-        u.r_stop.click(stop_run, None, u.sb_action)
-        u.r_clear.click(clear_context, None, u.sb_action)
-        u.r_rotate.click(rotate_now, None, u.sb_action)
-        u.man_go.click(manual_say, [u.man_speaker, u.man_text], u.sb_action)
-        u.r_enabled.change(set_enabled, u.r_enabled, u.sb_action)
-        u.man_text.submit(manual_say, [u.man_speaker, u.man_text], u.sb_action)
-        u.m_mode.change(set_mode, u.m_mode, u.sb_action)
+        u.r_start.click(bound(t_run.start_run, app), None, u.sb_action)
+        u.r_stop.click(bound(t_run.stop_run, app), None, u.sb_action)
+        u.r_clear.click(bound(t_run.clear_context, app), None, u.sb_action)
+        u.r_rotate.click(bound(t_topic.rotate_now, app), None, u.sb_action)
+        u.man_go.click(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
+        u.r_enabled.change(bound(t_run.set_enabled, app), u.r_enabled, u.sb_action)
+        u.man_text.submit(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
+        u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
 
         # Topic. The topic box has its own handler because an edit also drops
         # the "pinned by" credit; the rest are plain autosaves.
-        u.m_topic.blur(set_topic, u.m_topic, [u.m_topic_from, u.sb_action])
-        u.m_topic.submit(set_topic, u.m_topic, [u.m_topic_from, u.sb_action])
-        u.m_rot_chans.change(set_pin_channels, u.m_rot_chans, u.sb_action)
-        u.m_reseed.click(reseed_now, None, u.sb_action)
-        u.m_rot_next.click(rotate_now, None, u.sb_action)
+        u.m_topic.blur(bound(t_topic.set_topic, app), u.m_topic, [u.m_topic_from, u.sb_action])
+        u.m_topic.submit(bound(t_topic.set_topic, app), u.m_topic, [u.m_topic_from, u.sb_action])
+        u.m_rot_chans.change(bound(t_topic.set_pin_channels, app), u.m_rot_chans, u.sb_action)
+        u.m_reseed.click(bound(t_topic.reseed_now, app), None, u.sb_action)
+        u.m_rot_next.click(bound(t_topic.rotate_now, app), None, u.sb_action)
         bind(u.w_pins, "source_pins_weight", "pins weight", float, "release")
         bind(u.w_web, "source_web_weight", "web weight", float, "release")
         bind(u.w_crowd, "source_crowd_weight", "crowd weight", float, "release")
         bind(u.web_subjects, "web_subjects", "web subjects", None, "blur")
         bind(u.web_n, "web_results_per_search", "results per search", int, "release")
         bind(u.crowd_max, "crowd_max", "crowd queue cap", int, "release")
-        u.crowd_clear.click(clear_crowd, None, [u.sb_action, u.crowd_pending])
-        u.m_topic_now.click(switch_to_typed, u.m_topic, u.sb_action)
-        u.m_topic_queue.click(queue_typed, u.m_topic, u.sb_action)
+        u.crowd_clear.click(bound(t_topic.clear_crowd, app), None, [u.sb_action, u.crowd_pending])
+        u.m_topic_now.click(bound(t_topic.switch_to_typed, app), u.m_topic, u.sb_action)
+        u.m_topic_queue.click(bound(t_topic.queue_typed, app), u.m_topic, u.sb_action)
         bind(u.m_rotate, "topic_rotation", "topic rotation", bool)
         bind(u.m_rot_mins, "topic_interval_minutes", "rotation interval", float, "release")
         bind(u.m_images, "topic_images", "pinned images", bool)
@@ -766,10 +573,10 @@ def build(app):
         bind(u.m_seed, "rng_seed", "RNG seed", lambda v: int(v or 0), "blur")
 
         # Behaviour. No Apply button: everything persists as you change it.
-        bind(u.m_provider, "provider", "LLM provider", after=rebuild_note)
-        bind(u.m_model, "ollama_model", "Ollama model", after=rebuild_note)
+        bind(u.m_provider, "provider", "LLM provider", after=_rebuild_note)
+        bind(u.m_model, "ollama_model", "Ollama model", after=_rebuild_note)
         bind(u.m_oa_model, "openai_model", "OpenAI model",
-             lambda v: (v or "").strip(), after=rebuild_note)
+             lambda v: (v or "").strip(), after=_rebuild_note)
         bind(u.m_gap, "gap_seconds", "gap between turns", float, "release")
         bind(u.m_temp, "temperature", "LLM temperature", float, "release")
         bind(u.m_pred, "num_predict", "max tokens per line", int, "release")
@@ -790,9 +597,9 @@ def build(app):
              None, "blur")
         bind(u.m_bye_on, "goodbye_enabled", "goodbye", bool)
         bind(u.m_bye_tpl, "goodbye_template", "goodbye line", None, "blur")
-        u.m_refresh_models.click(refresh_models, u.m_provider,
+        u.m_refresh_models.click(bound(t_behaviour.refresh_models, app), u.m_provider,
                                  [u.m_model, u.m_oa_model, u.sb_action])
-        u.m_reset.click(reset_tuning, None,
+        u.m_reset.click(bound(t_behaviour.reset_tuning, app), None,
                         [u.m_gap, u.m_temp, u.m_pred, u.m_hist, u.sb_action])
 
         # Live feed. sb_action is deliberately absent: it is written only by
