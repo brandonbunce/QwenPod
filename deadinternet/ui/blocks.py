@@ -23,6 +23,7 @@ from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
                       RECOMMENDED, Speaker, VOICES_DIR)
 from ..llm import PROVIDER_OPENAI, PROVIDERS
 from .autoscroll import AUTOSCROLL_JS
+from .autosave import Autosave
 from .feedback import note, persist_clip, tpl_vars, warn
 from .selectors import NEW, SelectorUpdates, selectors_unchanged
 from .selectors import roster_choices as _roster_choices
@@ -67,26 +68,6 @@ def build(app):
 
     def selector_updates(voice=None, sel=None, man=None):
         return _selector_updates(app, voice, sel, man)
-
-    # ---- persistence ------------------------------------------------------
-    def autosave(field, label, cast=None, after=None):
-        """Persist one setting the moment it changes.
-
-        There is no Apply button anywhere in this tab: sliders save on release,
-        boxes on blur, everything else on change. Settings used to have three
-        different save behaviours and no way to tell which applied to what.
-        """
-        def handler(value):
-            with state.lock:
-                setattr(state.settings, field, cast(value) if cast else value)
-            state.save()
-            extra = after() if after else None
-            shown = value if not isinstance(value, str) else value.strip()[:60]
-            return f"Saved **{label}**: {shown}" + (f" - {extra}" if extra else "")
-        return handler
-
-    def bind(comp, field, label, cast=None, event="change", after=None):
-        getattr(comp, event)(autosave(field, label, cast, after), comp, u.sb_action)
 
     # ---- cloning tab ------------------------------------------------------
     def do_register(name, ref_audio, ref_text):
@@ -1018,6 +999,11 @@ def build(app):
                     panel_diagnostics()
 
         # ---- wiring ---------------------------------------------------------
+        # Constructed here, not at the top of build(): it needs the action line,
+        # which does not exist until panel_header() has run above.
+        saver = Autosave(app, u.sb_action)
+        bind = saver.bind
+
         u.g_go.click(do_synth,
                      [u.g_text, u.g_voice, u.g_instruct,
                       u.g_temp, u.g_topk, u.g_topp,
