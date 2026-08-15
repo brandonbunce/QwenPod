@@ -20,9 +20,9 @@ import time
 import gradio as gr
 import soundfile as sf
 
-from .config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
-                     RECOMMENDED, Speaker, TEMPLATE_VARS, VOICES_DIR)
-from .llm import PROVIDER_OPENAI, PROVIDERS
+from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
+                      RECOMMENDED, Speaker, TEMPLATE_VARS, VOICES_DIR)
+from ..llm import PROVIDER_OPENAI, PROVIDERS
 
 NEW = "<new speaker>"
 
