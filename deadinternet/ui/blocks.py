@@ -14,15 +14,16 @@ Layout notes, because gradio 6.22 constrains this more than it looks:
     feed is what used to wipe every button's confirmation within 1.5s.
 """
 import os
-import re
 import time
 
 import gradio as gr
 import soundfile as sf
 
 from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
-                      RECOMMENDED, Speaker, TEMPLATE_VARS, VOICES_DIR)
+                      RECOMMENDED, Speaker, VOICES_DIR)
 from ..llm import PROVIDER_OPENAI, PROVIDERS
+from .autoscroll import AUTOSCROLL_JS
+from .feedback import note, persist_clip, tpl_vars, warn
 
 NEW = "<new speaker>"
 
@@ -39,38 +40,6 @@ VOICE_BOOT_WAIT = 300
 # How often the persona builder reports progress while the scan runs.
 MINE_POLL = 1.0
 
-_MD = re.compile(r"[*`_]+")
-
-# The live feed rewrites the transcript wholesale every POLL_INTERVAL, which
-# resets the scroll position to the top -- so new lines land below the fold
-# exactly when you want to read them. gr.Timer does not fire in 6.22 and there
-# is no scroll hook, so an observer is installed client-side instead. It sticks
-# to the bottom only while the reader is already near the bottom, so scrolling
-# up to read history is not yanked back on the next tick.
-AUTOSCROLL_JS = """
-() => {
-  const stick = (box) => {
-    if (box.dataset.autoscroll) return;
-    box.dataset.autoscroll = "1";
-    let pinned = true;
-    box.addEventListener("scroll", () => {
-      pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    });
-    new MutationObserver(() => {
-      if (pinned) box.scrollTop = box.scrollHeight;
-    }).observe(box, {childList: true, subtree: true, characterData: true});
-    box.scrollTop = box.scrollHeight;
-  };
-  const scan = () => document
-    .querySelectorAll(".transcript-box, .queue-box")
-    .forEach(stick);
-  scan();
-  // Sub-tabs mount lazily, so the boxes may not exist yet at load.
-  new MutationObserver(scan).observe(document.body, {childList: true, subtree: true});
-}
-"""
-
-
 class _Bag:
     """Somewhere to hang components so the panel builders can stay separate
     functions while the wiring below still reads as plain names."""
@@ -80,24 +49,6 @@ def build(app):
     """app is a DeadInternetApp -- see app.py."""
     state, tts = app.state, app.tts
     u = _Bag()
-
-    # ---- feedback ---------------------------------------------------------
-    def note(msg, level="info"):
-        """Toast it and return it for the sticky action line.
-
-        Every action reports twice on purpose: the toast is visible wherever
-        you have scrolled to, the action line is still there a minute later.
-        """
-        text = _MD.sub("", str(msg)).strip()
-        if text:
-            try:
-                (gr.Warning if level == "warn" else gr.Info)(text[:300])
-            except Exception:  # never let a toast break the handler
-                pass
-        return msg
-
-    def warn(msg):
-        return note(msg, "warn")
 
     # ---- shared helpers -------------------------------------------------
     def voice_choices():
@@ -179,24 +130,7 @@ def build(app):
     def bind(comp, field, label, cast=None, event="change", after=None):
         getattr(comp, event)(autosave(field, label, cast, after), comp, u.sb_action)
 
-    def tpl_vars(field):
-        """The {placeholders} a template box accepts, for its tooltip."""
-        pairs = TEMPLATE_VARS.get(field, {})
-        return "Variables: " + ", ".join(f"{k} = {v}" for k, v in pairs.items())
-
     # ---- cloning tab ------------------------------------------------------
-    def persist_clip(name, ref_audio):
-        """Copy a reference clip into voices/ as mono WAV and return the path.
-
-        The server only keeps registrations in memory, so without a clip on
-        disk a restart loses the clone for good.
-        """
-        os.makedirs(VOICES_DIR, exist_ok=True)
-        stored = os.path.join(VOICES_DIR, f"{name}.wav")
-        data, sr = sf.read(ref_audio, always_2d=True)
-        sf.write(stored, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
-        return stored
-
     def do_register(name, ref_audio, ref_text):
         if not name or not name.strip():
             return (*selectors_unchanged(), warn("Give the voice a name."))
