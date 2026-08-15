@@ -24,6 +24,12 @@ from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
 from ..llm import PROVIDER_OPENAI, PROVIDERS
 from .autoscroll import AUTOSCROLL_JS
 from .autosave import Autosave
+from .feed import MINE_POLL, FeedUpdate
+from .feed import crowd_md as _crowd_md
+from .feed import poll as _poll
+from .feed import queue_md as _queue_md
+from .feed import stream_status as _stream_status
+from .feed import stream_voice_boot as _stream_voice_boot
 from .feedback import note, persist_clip, tpl_vars, warn
 from .selectors import NEW, SelectorUpdates, selectors_unchanged
 from .selectors import roster_choices as _roster_choices
@@ -31,18 +37,6 @@ from .selectors import selector_updates as _selector_updates
 from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
 
-# Live-update cadence, and how long one browser's feed runs before it has to
-# be restarted by a reload or the Refresh button.
-POLL_INTERVAL = 1.5
-POLL_LIFETIME = 3600
-
-# How long a freshly loaded page waits for the startup tts-server boot to
-# register the roster before giving up and leaving it to Refresh voices.
-# Generous: it covers loading the model plus re-encoding every speaker.
-VOICE_BOOT_WAIT = 300
-
-# How often the persona builder reports progress while the scan runs.
-MINE_POLL = 1.0
 
 class _Bag:
     """Somewhere to hang components so the panel builders can stay separate
@@ -346,30 +340,10 @@ def build(app):
                     + (f": {', '.join(sorted(picked))}" if 0 < n <= 6 else "."))
 
     def queue_md():
-        """Upcoming topics, so the rotation order is inspectable."""
-        if not app.director:
-            return "_(connect the bot to see the queue)_"
-        q = app.director.topic_queue()
-        if not q:
-            return ("_No source is both enabled and stocked. Give one weight on "
-                    "the Topics tab._")
-        # Already-formatted markdown lines, not a numbered list -- the sources
-        # are pools with weights, not a single ordered sequence.
-        return "\n\n".join(q[:24])
+        return _queue_md(app)
 
     def crowd_md():
-        """What people have submitted with /topic, oldest first."""
-        pend = list(state.settings.crowd_topics)
-        if not pend:
-            return "_(none submitted yet)_"
-        rows = []
-        for raw in pend[:40]:
-            who, _, text = raw.partition("\x1f")
-            rows.append(f"- **{who or 'someone'}**: {text or who}")
-        extra = len(pend) - len(rows)
-        if extra > 0:
-            rows.append(f"_...and {extra} more_")
-        return "\n".join(rows)
+        return _crowd_md(app)
 
     def clear_crowd():
         with state.lock:
@@ -513,74 +487,17 @@ def build(app):
 
     # ---- live feed --------------------------------------------------------
     def poll(last_topic=None):
-        lines = []
-        for t in state.recent(20):
-            tag = "**you**" if t.kind == "user" else f"**{t.speaker}**"
-            lines.append(f"{tag}: {t.text}")
-        # Rotation rewrites the topic, so push it back into the box -- but
-        # only when it actually changed, or the 1.5s feed would fight anyone
-        # typing in there. The sender rides along on the same check, so
-        # clearing it locally is not undone a second later.
-        topic = state.settings.topic
-        if topic == last_topic:
-            topic_up, from_up = gr.update(), gr.update()
-        else:
-            topic_up = gr.update(value=topic)
-            from_up = gr.update(value=state.settings.topic_author)
-        author = state.settings.topic_author
-        run_topic = (topic or "_(none)_") + (f"  \n_pinned by {author}_" if author else "")
-        q = queue_md()
-        return (app.status_line(),
-                "\n\n".join(lines) if lines else "_(nothing yet)_",
-                run_topic,
-                q,
-                q,               # same queue, shown on the Topics tab too
-                crowd_md(),
-                app.voice_report(),
-                app.chat_report(),
-                app.norm_report(),
-                app.topic_report(),
-                topic_up,
-                from_up)
+        return _poll(app, last_topic)
 
+    # `yield from`, not `return`: gradio decides whether to stream a handler by
+    # calling inspect.isgeneratorfunction on it, and a plain function that
+    # returns a generator fails that check -- the client would get one opaque
+    # object instead of a live feed.
     def stream_voice_boot():
-        """Fill the voice lists once the startup tts-server boot finishes.
-
-        The page is built immediately so the UI is usable, which means it is
-        usually built while the server is still loading its model and its
-        voice registry is empty. Without this the lists stay empty until
-        someone presses Refresh voices -- and the point of launching the
-        server automatically is not having to.
-        """
-        # Always push once. The lists in the page were baked when build() ran,
-        # so "the server has voices now" says nothing about what this page is
-        # showing -- a tab opened an hour later still carries the empty list.
-        yield selector_updates()
-        if voice_choices():
-            return          # server is up, so that push was the final answer
-        deadline = time.monotonic() + VOICE_BOOT_WAIT
-        while time.monotonic() < deadline:
-            time.sleep(2.0)
-            if voice_choices():
-                yield selector_updates()
-                return
+        yield from _stream_voice_boot(app, selector_updates, voice_choices)
 
     def stream_status():
-        """Live status feed.
-
-        gr.Timer never fires in gradio 6.22, so this is a generator the client
-        streams from instead. It is bounded so an abandoned tab eventually
-        releases its queue worker; the Refresh button covers the gap after it
-        expires. The action line is deliberately not in its outputs.
-        """
-        deadline = time.monotonic() + POLL_LIFETIME
-        last = None
-        while time.monotonic() < deadline:
-            out = poll(last)
-            last = state.settings.topic
-            yield out
-            time.sleep(POLL_INTERVAL)
-        yield poll(last)
+        yield from _stream_status(app)
 
     # ---- panels -------------------------------------------------------------
     init_voices = voice_choices()
@@ -1109,6 +1026,8 @@ def build(app):
                 u.topic_queue_md, u.crowd_pending,
                 u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic,
                 u.m_topic, u.m_topic_from]
+        assert len(outs) == len(FeedUpdate._fields)
+        assert u.sb_action not in outs, "the feed must never write the action line"
         # Wrapped so gradio sees a zero-argument callable: an explicit refresh
         # always pushes the topic, while the streaming feed passes the last
         # value it sent so it can skip an unchanged one.
