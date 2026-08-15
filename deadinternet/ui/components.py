@@ -24,3 +24,127 @@ class DiagnosticsPanel:
     chat: Any
     norm: Any
     topic: Any
+
+
+@dataclass(frozen=True)
+class GeneratePanel:
+    g_text: Any
+    g_instruct: Any
+    g_go: Any
+    g_audio: Any
+    g_status: Any
+    g_voice: Any
+    g_refresh: Any
+    g_temp: Any
+    g_topk: Any
+    g_topp: Any
+    g_rep: Any
+    g_seed: Any
+    g_max: Any
+
+
+@dataclass(frozen=True)
+class ClonePanel:
+    c_name: Any
+    c_audio: Any
+    c_text: Any
+    c_list: Any
+    c_del: Any
+    c_status: Any
+    c_reg: Any
+    c_refresh: Any
+
+
+@dataclass(frozen=True)
+class HeaderPanel:
+    sb_status: Any
+    sb_action: Any
+    d_connect: Any
+    d_channel: Any
+    d_join: Any
+    d_leave: Any
+    hdr_refresh: Any
+
+
+@dataclass(frozen=True)
+class RunPanel:
+    m_mode: Any
+    run_topic: Any
+    r_enabled: Any
+    run_queue: Any
+    r_transcript: Any
+    r_start: Any
+    r_stop: Any
+    r_clear: Any
+    r_rotate: Any
+    man_speaker: Any
+    man_text: Any
+    man_go: Any
+
+
+@dataclass(frozen=True)
+class SpeakersPanel:
+    s_roster: Any
+    s_name: Any
+    s_clip: Any
+    s_reftext: Any
+    s_persona: Any
+    s_stims: Any
+    s_stim_pct: Any
+    s_save: Any
+    s_delete: Any
+    s_handle: Any
+    s_mine: Any
+
+
+@dataclass(frozen=True)
+class TopicPanel:
+    m_topic_from: Any
+    topic_queue_md: Any
+    m_topic: Any
+    m_rotate: Any
+    m_rot_mins: Any
+    m_rot_clear: Any
+    m_rot_say: Any
+    m_rot_instant: Any
+    m_topic_now: Any
+    m_topic_queue: Any
+    w_pins: Any
+    m_rot_chans: Any
+    m_images: Any
+    w_web: Any
+    web_subjects: Any
+    web_n: Any
+    w_crowd: Any
+    crowd_pending: Any
+    m_seed: Any
+    m_reseed: Any
+    m_rot_next: Any
+    crowd_clear: Any
+    crowd_max: Any
+
+
+@dataclass(frozen=True)
+class BehaviourPanel:
+    m_reset: Any
+    m_open_on: Any
+    m_open_tpl: Any
+    m_topic_tpl: Any
+    m_topic_img_tpl: Any
+    m_bye_on: Any
+    m_bye_tpl: Any
+    m_provider: Any
+    m_refresh_models: Any
+    m_model: Any
+    m_oa_model: Any
+    m_gap: Any
+    m_temp: Any
+    m_pred: Any
+    m_hist: Any
+    m_norm: Any
+    m_dbfs: Any
+    m_cap_on: Any
+    m_cap_sec: Any
+    m_barge: Any
+    m_rejoin: Any
+    m_pause_empty: Any
