@@ -38,6 +38,8 @@ from .selectors import selector_updates as _selector_updates
 from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
 from .tabs import discord as t_discord
+from .tabs import speakers as t_speakers
+from .tabs import voices as t_voices
 
 
 class _Bag:
@@ -66,207 +68,6 @@ def build(app):
         return _selector_updates(app, voice, sel, man)
 
     # ---- cloning tab ------------------------------------------------------
-    def do_register(name, ref_audio, ref_text):
-        if not name or not name.strip():
-            return (*selectors_unchanged(), warn("Give the voice a name."))
-        if not ref_audio:
-            return (*selectors_unchanged(), warn("Upload a reference clip."))
-        name, ref_text = name.strip(), (ref_text or "").strip()
-
-        stored = persist_clip(name, ref_audio)
-        ok, msg = tts.register(name, stored, ref_text, force=True)
-        if not ok:
-            return (*selectors_unchanged(), warn(f"Registration failed - {msg}"))
-
-        # Record it so boot can re-register it. Keep any persona/enabled state
-        # if this name is already a Dead Internet speaker; otherwise park it
-        # disabled so it does not silently join conversations.
-        existing = state.get(name)
-        state.upsert(Speaker(
-            name=name, ref_wav=stored, ref_text=ref_text,
-            persona=existing.persona if existing else "",
-            enabled=existing.enabled if existing else False,
-            # Preserve tics; re-registering a clip must not wipe them.
-            stims=existing.stims if existing else "",
-            stim_chance=existing.stim_chance if existing else 0.0,
-        ))
-
-        mode = "ICL (with transcript)" if ref_text else "speaker-embedding only"
-        return (
-            *selector_updates(voice=name, sel=name),
-            note(f"Registered '{name}' - {mode}. Saved to `voices/{name}.wav`, "
-                 "so it survives a tts-server restart."),
-        )
-
-    def do_delete_voice(name):
-        if not name:
-            return (*selectors_unchanged(), warn("Nothing selected."))
-        tts.forget(name)
-        # Drop the saved clip too, or boot would resurrect it.
-        state.remove(name)
-        stored = os.path.join(VOICES_DIR, f"{name}.wav")
-        if os.path.exists(stored):
-            os.remove(stored)
-        return (*selector_updates(sel=NEW),
-                note(f"Removed '{name}' and deleted its saved clip."))
-
-    def refresh_voices():
-        """Repopulate every voice list, re-registering with tts-server first.
-
-        The list is built once when the page is created, so a tts-server that
-        was down then -- or restarted since, which wipes its in-memory
-        registry -- leaves an empty dropdown with nothing to explain it.
-        """
-        ok, msg = app.resync_voices()
-        return (*selector_updates(), note(msg) if ok else warn(msg))
-
-    def do_synth(text, voice, instructions,
-                 temperature, top_k, top_p, rep_pen, seed, max_new):
-        if not text or not text.strip():
-            return None, "Enter some text."
-        if not voice:
-            # An empty dropdown almost always means tts-server was down when
-            # the page was built, or has been restarted since and lost its
-            # in-memory registry. Say so instead of "pick a voice" from a
-            # list with nothing in it.
-            if not app.tts_alive():
-                return None, ("**tts-server is not running** at "
-                              f"`{state.settings.tts_url}`. Start it, then press "
-                              "**Refresh voices**.")
-            return None, "Pick a voice - press **Refresh voices** if the list is empty."
-        gen = {
-            "temperature": temperature,
-            "top_k": int(top_k),
-            "top_p": top_p,
-            "repetition_penalty": rep_pen,
-            "max_new_tokens": int(max_new),
-        }
-        if instructions and instructions.strip():
-            gen["instructions"] = instructions.strip()
-        if int(seed) >= 0:
-            gen["seed"] = int(seed)
-        try:
-            wav = tts.synth(text, voice, **gen)
-        except Exception as e:
-            return None, f"Generation failed - {e}"
-        out = "/tmp/qwentts_ui_out.wav"
-        with open(out, "wb") as f:
-            f.write(wav)
-        info = sf.info(out)
-        return out, f"{info.duration:.2f}s @ {info.samplerate} Hz"
-
-    # ---- speakers ---------------------------------------------------------
-    def load_speaker(sel):
-        blank = ("", None, "", "", "", 0)
-        if not sel or sel == NEW:
-            return (*blank, "New speaker - fill in the form and press Save.")
-        sp = state.get(sel)
-        if not sp:
-            return (*blank, "Not found.")
-        clip = sp.ref_wav if sp.ref_wav and os.path.exists(sp.ref_wav) else None
-        return (sp.name, clip, sp.ref_text, sp.persona, sp.stims,
-                sp.stim_chance, f"Editing **{sp.name}**.")
-
-    def save_speaker(name, clip, ref_text, persona, stims, stim_pct):
-        name = (name or "").strip()
-        if not name:
-            return (*selectors_unchanged(), warn("Give the speaker a name."))
-        existing = state.get(name)
-        stored = existing.ref_wav if existing else ""
-
-        if clip:
-            os.makedirs(VOICES_DIR, exist_ok=True)
-            stored = os.path.join(VOICES_DIR, f"{name}.wav")
-            # Normalise to mono WAV on the way in so the stored clip is
-            # exactly what gets re-registered after a server restart.
-            data, sr = sf.read(clip, always_2d=True)
-            sf.write(stored, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
-        if not stored:
-            return (*selectors_unchanged(),
-                    warn("Upload a reference clip for this speaker."))
-
-        sp = Speaker(
-            name=name, ref_wav=stored, ref_text=(ref_text or "").strip(),
-            # Enabled lives on the Run tab's "Who's talking" list now; keep
-            # whatever it is set to rather than round-tripping it through a
-            # second control that could disagree.
-            persona=(persona or "").strip(),
-            enabled=existing.enabled if existing else False,
-            stims=(stims or "").strip(), stim_chance=float(stim_pct or 0),
-        )
-        state.upsert(sp)
-        ok, msg = tts.register(name, stored, sp.ref_text, force=True)
-        out = selector_updates(sel=name, man=name)
-        if ok:
-            return (*out, note(f"Saved '{name}'."))
-        return (*out, warn(f"Saved '{name}' but registration failed - {msg}"))
-
-    def delete_speaker(sel):
-        if not sel or sel == NEW:
-            return (*selectors_unchanged(), warn("Nothing selected."))
-        state.remove(sel)
-        tts.forget(sel)
-        stored = os.path.join(VOICES_DIR, f"{sel}.wav")
-        if os.path.exists(stored):
-            os.remove(stored)
-        return (*selector_updates(sel=NEW), note(f"Deleted '{sel}'."))
-
-    def build_persona(handle, current_name):
-        """Read someone's message history and write a persona from it.
-
-        A generator, because the scan makes hundreds of API calls and can run
-        for minutes; the caller polls the future so the button reports
-        progress instead of appearing hung.
-        """
-        try:
-            fut, prog = app.persona_progress(handle)
-        except Exception as e:
-            yield gr.update(), gr.update(), warn(str(e))
-            return
-
-        yield gr.update(), gr.update(), "Starting scan..."
-        while not fut.done():
-            who = prog.get("resolved") or handle
-            yield (gr.update(), gr.update(),
-                   f"Reading history for **{who}** - {prog.get('scanned', 0):,} messages "
-                   f"checked across {prog.get('channels', 0)} channels, "
-                   f"**{prog.get('found', 0)}** of theirs found "
-                   f"({prog.get('probes_done', 0)}/{prog.get('probes', 0)} probes).")
-            time.sleep(MINE_POLL)
-
-        try:
-            resolved, samples, stats = fut.result()
-        except Exception as e:
-            yield gr.update(), gr.update(), warn(f"Scan failed - {e}")
-            return
-
-        if not samples:
-            yield (gr.update(), gr.update(),
-                   warn(f"No messages found for '{handle}' after reading "
-                        f"{stats['scanned']:,} messages in {stats['channels']} channels. "
-                        "Check the spelling, or try their user ID - the handle is matched "
-                        "against username, display name and nickname."))
-            return
-
-        yield (gr.update(), gr.update(),
-               f"Found {len(samples)} messages from **{resolved}**. "
-               f"Sampling {PERSONA_SAMPLES} and writing the persona - this takes a moment.")
-        try:
-            persona, used = app.write_persona(resolved, samples)
-        except Exception as e:
-            yield gr.update(), gr.update(), warn(f"Could not write the persona - {e}")
-            return
-
-        # Only fill the name if it is still empty; overwriting a name the user
-        # already typed would silently retarget the save.
-        name_up = (gr.update(value=resolved) if not (current_name or "").strip()
-                   else gr.update())
-        yield (name_up, gr.update(value=persona),
-               note(f"Built a persona for {resolved} from {used} of {len(samples)} "
-                    f"messages ({stats['scanned']:,} scanned). Read it over, then "
-                    "press Save speaker."))
-
-    # ---- discord ----------------------------------------------------------
     # ---- topic ------------------------------------------------------------
     def set_topic(text):
         """Editing the topic by hand drops the credit: it is no longer the
@@ -895,7 +696,7 @@ def build(app):
         saver = Autosave(app, u.sb_action)
         bind = saver.bind
 
-        u.g_go.click(do_synth,
+        u.g_go.click(bound(t_voices.do_synth, app),
                      [u.g_text, u.g_voice, u.g_instruct,
                       u.g_temp, u.g_topk, u.g_topp,
                       u.g_rep, u.g_seed, u.g_max],
@@ -908,9 +709,9 @@ def build(app):
         # control. Assert what can be asserted; the field names carry the rest.
         sel_out = [u.g_voice, u.c_list, u.s_roster, u.man_speaker, u.r_enabled]
         assert len(sel_out) == len(SelectorUpdates._fields)
-        u.g_refresh.click(refresh_voices, None, sel_out + [u.g_status])
-        u.c_reg.click(do_register, [u.c_name, u.c_audio, u.c_text], sel_out + [u.c_status])
-        u.c_del.click(do_delete_voice, u.c_list, sel_out + [u.c_status])
+        u.g_refresh.click(bound(t_voices.refresh_voices, app), None, sel_out + [u.g_status])
+        u.c_reg.click(bound(t_voices.do_register, app), [u.c_name, u.c_audio, u.c_text], sel_out + [u.c_status])
+        u.c_del.click(bound(t_voices.do_delete_voice, app), u.c_list, sel_out + [u.c_status])
         u.c_refresh.click(lambda: (*selector_updates(), "Refreshed."),
                           None, sel_out + [u.c_status])
 
@@ -919,15 +720,15 @@ def build(app):
         u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
 
         # Speakers
-        u.s_roster.change(load_speaker, u.s_roster,
+        u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,
                           [u.s_name, u.s_clip, u.s_reftext, u.s_persona, u.s_stims,
                            u.s_stim_pct, u.sb_action])
-        u.s_save.click(save_speaker,
+        u.s_save.click(bound(t_speakers.save_speaker, app),
                        [u.s_name, u.s_clip, u.s_reftext, u.s_persona, u.s_stims,
                         u.s_stim_pct],
                        sel_out + [u.sb_action])
-        u.s_delete.click(delete_speaker, u.s_roster, sel_out + [u.sb_action])
-        u.s_mine.click(build_persona, [u.s_handle, u.s_name],
+        u.s_delete.click(bound(t_speakers.delete_speaker, app), u.s_roster, sel_out + [u.sb_action])
+        u.s_mine.click(bound(t_speakers.build_persona, app), [u.s_handle, u.s_name],
                        [u.s_name, u.s_persona, u.sb_action])
 
         # Run
