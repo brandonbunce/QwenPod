@@ -25,6 +25,7 @@ from .feed import poll as _poll
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
 from .feedback import tpl_vars
+from .panels import build_diagnostics
 from .selectors import NEW, SelectorUpdates
 from .selectors import roster_choices as _roster_choices
 from .selectors import selector_updates as _selector_updates
@@ -63,7 +64,6 @@ def build(app):
     def selector_updates(voice=None, sel=None, man=None):
         return _selector_updates(app, voice, sel, man)
 
-    # ---- cloning tab ------------------------------------------------------
     # ---- live feed --------------------------------------------------------
     def poll(last_topic=None):
         return _poll(app, last_topic)
@@ -448,23 +448,6 @@ def build(app):
             info="Spoken once after the current line is cut off, before the "
                  "bots go quiet. " + tpl_vars("goodbye_template"))
 
-    def panel_diagnostics():
-        gr.Markdown(
-            "**Voice connection** - Discord terminates the call when the channel "
-            "empties; the watchdog gets back in when someone returns."
-        )
-        u.dbg_voice = gr.Markdown("_(not connected)_")
-        gr.Markdown(
-            "**Chat input** - the only path a real person has into the conversation. "
-            "Messages count only from the server the bot is currently in, and only "
-            "act in interactive mode."
-        )
-        u.dbg_chat = gr.Markdown("_(not connected)_")
-        gr.Markdown("**Output loudness**")
-        u.dbg_norm = gr.Markdown("_(nothing played yet)_")
-        gr.Markdown("**Topic rotation**")
-        u.dbg_topic = gr.Markdown("_(rotation off)_")
-
     # ---- layout -------------------------------------------------------------
     with gr.Blocks(title="qwentts.cpp") as demo:
         gr.Markdown(f"# qwentts.cpp\n{app.banner()}")
@@ -492,7 +475,12 @@ def build(app):
                 with gr.Tab("Behaviour"):
                     panel_behaviour()
                 with gr.Tab("Diagnostics"):
-                    panel_diagnostics()
+                    diag = build_diagnostics()
+                    # Shim: the wiring block below still reads u.*, so each
+                    # panel's fields are copied back onto it. Removed per panel
+                    # as the wiring is split up.
+                    (u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic) = (
+                        diag.voice, diag.chat, diag.norm, diag.topic)
 
         # ---- wiring ---------------------------------------------------------
         # Constructed here, not at the top of build(): it needs the action line,
