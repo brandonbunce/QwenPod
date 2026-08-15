@@ -1,0 +1,21 @@
+# Python dependencies for the Dead Internet Mode app (app.py + deadinternet/).
+# The C++ engine has no Python dependencies; this file covers the web UI and
+# Discord bot only.
+#
+#     python -m venv .venv-app
+#     .venv-app/bin/pip install -r requirements-app.txt
+#
+# gradio is pinned exactly, not floated. deadinternet/ui.py is written around
+# four behaviours specific to 6.22: gr.Timer never fires (the live feed is a
+# streaming generator bound to demo.load instead), gr.Dataframe ignores value
+# updates pushed from a handler (the roster is a Radio of choices), css= and
+# theme= moved from Blocks() to launch(), and inactive sub-tabs are not in the
+# DOM. A minor-version bump can silently undo any of those workarounds, so
+# treat a gradio upgrade as a change that needs the UI checklist run against it.
+gradio==6.22.0
+
+discord.py==2.7.1
+numpy==2.5.1
+python-dotenv==1.2.2
+requests==2.34.2
+soundfile==0.14.0
