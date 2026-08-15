@@ -24,8 +24,11 @@ from ..config import (HELP, MODES, MODE_MANUAL, PERSONA_SAMPLES, PERSONA_YEARS,
 from ..llm import PROVIDER_OPENAI, PROVIDERS
 from .autoscroll import AUTOSCROLL_JS
 from .feedback import note, persist_clip, tpl_vars, warn
-
-NEW = "<new speaker>"
+from .selectors import NEW, SelectorUpdates, selectors_unchanged
+from .selectors import roster_choices as _roster_choices
+from .selectors import selector_updates as _selector_updates
+from .selectors import speaker_names as _speaker_names
+from .selectors import voice_choices as _voice_choices
 
 # Live-update cadence, and how long one browser's feed runs before it has to
 # be restarted by a reload or the Refresh button.
@@ -51,64 +54,19 @@ def build(app):
     u = _Bag()
 
     # ---- shared helpers -------------------------------------------------
+    # Thin adapters over ui/selectors.py, so the ~30 call sites below keep
+    # reading as plain no-arg names while the logic lives at module level.
     def voice_choices():
-        try:
-            return tts.server_voices()
-        except Exception:
-            return []
+        return _voice_choices(app)
 
     def speaker_names():
-        return state.names()
+        return _speaker_names(app)
 
     def roster_choices():
-        """(label, name) pairs for the roster radio.
-
-        Doubles as the roster display and the speaker selector -- they used to
-        be a Markdown table plus a dropdown saying the same thing twice.
-        """
-        with state.lock:
-            speakers = list(state.speakers)
-        out = [(NEW, NEW)]
-        for s in speakers:
-            tics = s.stim_list()
-            bits = ["on" if s.enabled else "off"]
-            if tics and s.stim_chance:
-                bits.append(f"{tics[0][:14]}{'+' if len(tics) > 1 else ''} @{s.stim_chance:g}%")
-            if not s.ref_wav:
-                bits.append("no clip")
-            persona = (s.persona or "").strip().replace("\n", " ")
-            if persona:
-                bits.append(persona[:40] + ("..." if len(persona) > 40 else ""))
-            out.append((f"{s.name}  ·  " + "  ·  ".join(bits), s.name))
-        return out
-
-    # Order matters -- every mutation returns these four, in this order:
-    #   g_voice, c_list, s_roster, man_speaker, r_enabled
-    SELECTORS = 5
+        return _roster_choices(app)
 
     def selector_updates(voice=None, sel=None, man=None):
-        """Refresh every control that lists voices or speakers.
-
-        They read from two different sources (the tts-server registry and the
-        saved roster) and sit on different tabs, so refreshing only the ones
-        next to the button left the others stale until the app restarted.
-        """
-        vc = voice_choices()
-        names = speaker_names()
-        pick = lambda v: {"value": v} if v is not None else {}
-        return (
-            gr.update(choices=vc, **pick(voice)),
-            gr.update(choices=vc, **pick(voice)),
-            gr.update(choices=roster_choices(), **pick(sel)),
-            gr.update(choices=names, **pick(man)),
-            # Run-tab enable/disable list: choices AND ticks both move when a
-            # speaker is added, deleted or has its enabled flag changed.
-            gr.update(choices=[s.name for s in state.restorable()],
-                      value=[s.name for s in state.active()]),
-        )
-
-    def selectors_unchanged():
-        return tuple(gr.update() for _ in range(SELECTORS))
+        return _selector_updates(app, voice, sel, man)
 
     # ---- persistence ------------------------------------------------------
     def autosave(field, label, cast=None, after=None):
@@ -1066,9 +1024,13 @@ def build(app):
                       u.g_rep, u.g_seed, u.g_max],
                      [u.g_audio, u.g_status])
 
-        # Every mutation refreshes all four selectors, so nothing on another
+        # Every mutation refreshes all five selectors, so nothing on another
         # tab goes stale until the app restarts.
+        # Order here is the contract with SelectorUpdates: same arity but the
+        # wrong order raises nothing, it just lands each update in the wrong
+        # control. Assert what can be asserted; the field names carry the rest.
         sel_out = [u.g_voice, u.c_list, u.s_roster, u.man_speaker, u.r_enabled]
+        assert len(sel_out) == len(SelectorUpdates._fields)
         u.g_refresh.click(refresh_voices, None, sel_out + [u.g_status])
         u.c_reg.click(do_register, [u.c_name, u.c_audio, u.c_text], sel_out + [u.c_status])
         u.c_del.click(do_delete_voice, u.c_list, sel_out + [u.c_status])
