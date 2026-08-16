@@ -30,6 +30,13 @@ TIMEOUT = 180.0
 _NOISE = re.compile(r"\[(BLANK_AUDIO|INAUDIBLE|SILENCE|MUSIC|SOUND|NOISE)[^\]]*\]",
                     re.IGNORECASE)
 
+# Peak below this is treated as "nothing was captured". Measured on this
+# machine: a quiet room through a working mic peaks around -49 dBFS, while
+# takes recorded from the wrong input peak at -65 to -70 with a -91 mean, which
+# is the 16-bit noise floor. -60 sits in the gap with room on both sides, so a
+# genuinely quiet speaker is not accused of having a broken microphone.
+SILENCE_DBFS = -60.0
+
 
 class Whisper:
     """Wraps one whisper-cli invocation per utterance.
@@ -82,6 +89,26 @@ class Whisper:
             err = _to_16k_mono(audio_path, wav)
             if err:
                 return "", err
+
+            # A silent take is the single most likely thing to go wrong here,
+            # and it is indistinguishable from a bad transcription unless it is
+            # checked for: the browser hands back a perfectly well-formed WAV
+            # of exactly the right length containing nothing at all. That
+            # happens whenever Chrome's chosen input is not the microphone you
+            # are speaking into -- its default is its own setting, not the
+            # system's, so an unplugged line-in gets recorded quite happily.
+            # Saying so beats "nothing recognisable", which sounds like Whisper
+            # struggled with your accent.
+            peak = _peak_dbfs(wav)
+            if peak is not None and peak < SILENCE_DBFS:
+                return "", (
+                    f"That recording is silent (peak {peak:.0f} dBFS). The "
+                    "browser captured audio of the right length with nothing "
+                    "in it, which almost always means it is recording from the "
+                    "wrong input. Check the microphone Chrome is using -- the "
+                    "padlock in the address bar, or chrome://settings/content/"
+                    "microphone -- rather than the system default."
+                )
             try:
                 out = subprocess.run(
                     [self._abs(self.binary),
@@ -111,6 +138,28 @@ class Whisper:
 def _ffmpeg():
     from shutil import which
     return which("ffmpeg")
+
+
+def _peak_dbfs(path):
+    """Loudest sample in the file, in dBFS. None if it cannot be measured.
+
+    Peak rather than mean, because a take that is mostly silence with a few
+    words in it is fine and should not be rejected -- only one with no peaks
+    at all is broken.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+        data, _ = sf.read(path, dtype="float32", always_2d=True)
+    except Exception:
+        return None
+    if data.size == 0:
+        return -np.inf
+    peak = float(np.abs(data).max())
+    if peak <= 0.0:
+        return -999.0
+    import math
+    return 20.0 * math.log10(peak)
 
 
 def _to_16k_mono(src, dst):
