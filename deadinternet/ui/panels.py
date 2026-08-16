@@ -222,9 +222,19 @@ def build_run(app, init_names):
             # Speak instead of typing. Transcribed by whisper.cpp on the CPU and
             # said straight away -- there is no review step, so what Whisper
             # heard is what goes out. The event log records every transcript.
+            # Everything decorative is off. This clip exists for about a
+            # second before it is transcribed and discarded, so the live
+            # waveform and the trim editor are pure cost -- and the live
+            # waveform in particular redraws every frame while capturing,
+            # which is the expensive thing on this path. Recording at 16 kHz
+            # is what whisper.cpp wants anyway, so it also cuts the blob the
+            # browser has to upload.
             man_mic = gr.Audio(
                 sources=["microphone", "upload"], type="filepath", label=None,
-                container=False, elem_classes=["mic-row"])
+                container=False, editable=False,
+                waveform_options=gr.WaveformOptions(
+                    show_recording_waveform=False, sample_rate=16000),
+                elem_classes=["mic-row"])
             gr.Markdown(
                 "_Record and it is transcribed and spoken as the chosen speaker "
                 "immediately. Needs `./setup-whisper.sh`; **Diagnostics** shows "
