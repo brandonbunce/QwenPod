@@ -280,6 +280,15 @@ creates a voice rather than two. A speaker with no persona is parked
 5–10s of clean audio makes a good reference. Supplying the transcript enables
 ICL mode, which tracks the reference more closely than speaker-embedding-only.
 
+**The transcript fills itself in.** Add or record a clip and whisper.cpp reads
+it back into the box — the same engine the Run-tab microphone uses, so it needs
+`./setup-whisper.sh` and says so if it is missing. **Check what it wrote before
+saving:** a wrong word in the reference transcript makes the clone worse and
+nothing else reports it. **Transcribe clip** re-runs it by hand, which is how
+you transcribe a clip loaded off the roster — the automatic pass is wired to the
+clip's *upload* and *stop recording* events rather than its change event, so
+selecting a speaker never overwrites a transcript that was already right.
+
 ### Building a persona from Discord history
 
 **Build persona** on the **Speakers** tab takes a Discord handle, reads that person's

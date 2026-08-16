@@ -6,6 +6,7 @@ import gradio as gr
 import soundfile as sf
 
 from ...config import PERSONA_SAMPLES, Speaker, VOICES_DIR
+from ...events import VOICE
 from ..feed import MINE_POLL
 from ..feedback import note, warn
 from ..selectors import (NEW, roster_choices, selector_updates,
@@ -59,6 +60,45 @@ def save_speaker(app, name, clip, ref_text, persona, stims, stim_pct):
     if ok:
         return (*out, note(f"Saved '{name}'."))
     return (*out, warn(f"Saved '{name}' but registration failed - {msg}"))
+
+
+def transcribe_clip(app, clip):
+    """Fill the reference transcript from the reference clip itself.
+
+    The transcript is what the voice is cloned against, so typing it out by
+    hand is both the slowest part of adding a speaker and the easiest to get
+    subtly wrong -- a missing word makes the clone worse, and nothing tells
+    you. Whisper reads the clip you just gave it, which is the same audio the
+    cloner will hear.
+
+    Wired to the clip's upload and stop_recording events, not its change event:
+    change also fires when picking a speaker off the roster loads their saved
+    clip, which would re-transcribe on every click and overwrite a transcript
+    that was already correct. A generator, so a long clip reports progress.
+    """
+    if not clip:
+        yield gr.update(), warn("Add a reference clip first.")
+        return
+
+    ok, why = app.whisper.available()
+    if not ok:
+        # Not fatal: the transcript is optional, so say what is missing and
+        # leave the box alone rather than making this look like a failure.
+        yield gr.update(), warn(why)
+        return
+
+    yield gr.update(), "Reading the reference clip..."
+    text, err = app.whisper.transcribe(clip)
+    if err:
+        app.events.add(VOICE, f"reference transcript failed - {err}")
+        yield gr.update(), warn(err)
+        return
+
+    app.events.add(VOICE, f"reference transcript: {text}")
+    yield (gr.update(value=text),
+           note("Transcribed the reference clip. **Read it over** - a wrong "
+                "word here makes the clone worse and nothing else will tell "
+                "you. Then press **Save speaker**."))
 
 
 def delete_speaker(app, sel):

@@ -90,6 +90,7 @@ class SpeakersPanel:
     s_name: Any
     s_clip: Any
     s_reftext: Any
+    s_transcribe: Any
     s_persona: Any
     s_stims: Any
     s_stim_pct: Any

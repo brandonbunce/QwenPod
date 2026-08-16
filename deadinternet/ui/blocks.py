@@ -124,6 +124,7 @@ def build(app):
                 u.s_name = speakers.s_name
                 u.s_clip = speakers.s_clip
                 u.s_reftext = speakers.s_reftext
+                u.s_transcribe = speakers.s_transcribe
                 u.s_persona = speakers.s_persona
                 u.s_stims = speakers.s_stims
                 u.s_stim_pct = speakers.s_stim_pct
@@ -249,6 +250,12 @@ def build(app):
         u.s_delete.click(bound(t_speakers.delete_speaker, app), u.s_roster, sel_out + [u.sb_action])
         u.s_mine.click(bound(t_speakers.build_persona, app), [u.s_handle, u.s_name],
                        [u.s_name, u.s_persona, u.sb_action])
+        # upload and stop_recording, deliberately not change: change also fires
+        # when the roster loads a saved clip, which would re-transcribe on
+        # every click and overwrite a transcript that was already right.
+        for ev in (u.s_clip.upload, u.s_clip.stop_recording, u.s_transcribe.click):
+            ev(bound(t_speakers.transcribe_clip, app), u.s_clip,
+               [u.s_reftext, u.sb_action], concurrency_limit=1)
 
         u.s_prev.click(bound(t_speakers.roster_prev, app), u.s_roster, u.s_roster)
         u.s_next.click(bound(t_speakers.roster_next, app), u.s_roster, u.s_roster)

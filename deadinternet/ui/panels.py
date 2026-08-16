@@ -281,7 +281,15 @@ def build_speakers(app):
                 "waveform to highlight it, then click the small **Trim** button that "
                 "appears. Dragging alone does nothing - clicking Trim without a "
                 "highlighted range also does nothing, silently._")
-            s_reftext = gr.Textbox(label="Reference transcript (optional)", lines=3)
+            s_reftext = gr.Textbox(
+                label="Reference transcript (optional)", lines=3,
+                info="Filled in by whisper.cpp when you add a clip. Check it "
+                     "before saving - a wrong word makes the clone worse and "
+                     "nothing else reports it.")
+            # Also a button, because the automatic pass only fires on a clip
+            # you just added: selecting a speaker off the roster loads their
+            # saved clip without re-transcribing it.
+            s_transcribe = gr.Button("Transcribe clip", size="sm")
 
         with gr.Column(scale=1):
             s_persona = gr.Textbox(
@@ -324,6 +332,7 @@ def build_speakers(app):
         s_name=s_name,
         s_clip=s_clip,
         s_reftext=s_reftext,
+        s_transcribe=s_transcribe,
         s_persona=s_persona,
         s_stims=s_stims,
         s_stim_pct=s_stim_pct,
