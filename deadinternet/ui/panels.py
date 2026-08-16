@@ -15,6 +15,7 @@ from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
                          HeaderPanel, OutputsPanel, RunPanel, SpeakersPanel,
                          TopicPanel)
 from .feedback import tpl_vars
+from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
 from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
 from ..llm import PROVIDERS
@@ -222,32 +223,16 @@ def build_run(app, init_names):
             # Speak instead of typing. Transcribed by whisper.cpp on the CPU and
             # said straight away -- there is no review step, so what Whisper
             # heard is what goes out. The event log records every transcript.
-            # sample_rate MUST match the sound card, and 48000 is what this
-            # machine runs (pipewire here is pinned to it, and it is the modern
-            # default generally). Gradio builds its decode context as
-            # `new AudioContext({sampleRate: waveform_options.sample_rate || 44100})`,
-            # and a context whose rate the hardware cannot supply forces Chrome
-            # through a resampler. A profile of a single recording showed 13.5s
-            # of one 13.6s main-thread stall inside getChannelData because of
-            # it -- the page locks up on stop, and the resampled audio comes out
-            # as something Whisper cannot read. The gradio default of 44100 is
-            # itself a mismatch on 48 kHz hardware, so this has to be set, not
-            # left off. whisper.cpp still gets 16 kHz; ffmpeg does that
-            # conversion server-side where it costs a few milliseconds.
-            #
-            # The rest is decoration this clip never needs: it is transcribed
-            # and discarded within a second, so there is no waveform to watch
-            # and nothing to trim.
-            man_mic = gr.Audio(
-                sources=["microphone", "upload"], type="filepath", label=None,
-                container=False, editable=False,
-                waveform_options=gr.WaveformOptions(
-                    show_recording_waveform=False, sample_rate=48000),
-                elem_classes=["mic-row"])
-            gr.Markdown(
-                "_Record and it is transcribed and spoken as the chosen speaker "
-                "immediately. Needs `./setup-whisper.sh`; **Diagnostics** shows "
-                "whether it is set up._", elem_classes=["mic-hint"])
+            # A recorder that is not a gr.Audio -- see ui/mic.py for why.
+            # Nothing here decodes the clip in the browser, so a long take
+            # cannot freeze the page, and the input device is chosen
+            # explicitly instead of inheriting whatever Chrome defaults to.
+            gr.HTML(MIC_HTML)
+            # The seam back into gradio. Carries the uploaded file's server
+            # path; hidden by CSS rather than visible=False so the textarea is
+            # guaranteed to exist in the DOM for the JS to write to.
+            man_mic = gr.Textbox(elem_id="qp-mic-path", label=None,
+                                 container=False, elem_classes=["qp-hidden"])
 
     return RunPanel(
         m_mode=m_mode,

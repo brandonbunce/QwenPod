@@ -22,6 +22,7 @@ from .feed import FeedUpdate
 from .feed import poll as _poll
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
+from .mic import MIC_JS
 from .panels import (build_behaviour, build_diagnostics, build_generate,
                      build_header, build_outputs, build_run, build_speakers,
                      build_topic)
@@ -260,13 +261,9 @@ def build(app):
         u.man_go.click(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
         u.r_enabled.change(bound(t_run.set_enabled, app), u.r_enabled, u.sb_action)
         u.man_text.submit(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
-        # change, not stop_recording. stop_recording fires the moment the
-        # browser stops capturing, which is before the blob has been uploaded
-        # and turned into a server-side path -- the handler then receives None
-        # and there is nothing to transcribe. change fires once the value is
-        # actually set, whether it arrived from the microphone or a dropped
-        # file. say_from_mic no-ops on an empty value, which is what stops the
-        # clear-the-recorder update below from re-triggering it.
+        # The recorder in ui/mic.py writes the uploaded file's server path into
+        # this hidden textbox and fires an input event; that is what gets us
+        # back into gradio without a gr.Audio anywhere near the clip.
         u.man_mic.change(bound(t_run.say_from_mic, app),
                          [u.man_speaker, u.man_mic],
                          [u.sb_action, u.man_mic])
@@ -361,5 +358,6 @@ def build(app):
         # built, which at startup is before the server has finished booting.
         demo.load(stream_voice_boot, None, sel_out)
         demo.load(None, None, None, js=AUTOSCROLL_JS)
+        demo.load(None, None, None, js=MIC_JS)
 
     return demo

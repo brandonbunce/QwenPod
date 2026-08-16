@@ -82,6 +82,42 @@ APP_CSS = """
 .topic-box { font-size: 1.02rem; }
 
 /* ---- microphone ------------------------------------------------------ */
+/* The hidden seam: the recorder writes an uploaded file's server path here and
+   a normal gradio change event picks it up. Hidden with CSS rather than
+   visible=False so the textarea is guaranteed to be in the DOM to write to. */
+.qp-hidden { display: none !important; }
+
+#qp-mic { margin-top: 0.25rem; }
+.qp-mic-row { display: flex; align-items: center; gap: 0.4rem; }
+#qp-mic-dev {
+  flex: 1 1 auto; min-width: 0;
+  background: var(--input-background-fill);
+  color: var(--body-text-color);
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.4rem; font-size: 0.85rem;
+}
+#qp-mic-rec, #qp-mic-file-label {
+  flex: 0 0 auto; cursor: pointer; white-space: nowrap;
+  background: var(--button-secondary-background-fill);
+  color: var(--button-secondary-text-color);
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.7rem; font-size: 0.85rem;
+}
+#qp-mic-rec.qp-recording {
+  background: #d13438; color: #fff; border-color: #d13438;
+}
+#qp-mic-file { display: none; }
+/* Live input level. A dead microphone reads as a bar that never moves, which
+   is the thing that was impossible to see before. */
+#qp-mic-meter {
+  flex: 0 0 70px; height: 6px; border-radius: 3px;
+  background: var(--border-color-primary); overflow: hidden;
+}
+#qp-mic-meter i { display: block; height: 100%; width: 0%; transition: width 0.05s linear; }
+#qp-mic-status { font-size: 0.8rem; opacity: 0.8; margin-top: 0.25rem; min-height: 1.1em; }
+
 /* Do NOT cap the height of this component. An earlier version set
    max-height: 78px to stop the recorder reserving waveform-editor space, but
    gradio's own .block sets overflow: hidden -- so the cap silently clipped the

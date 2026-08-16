@@ -1,5 +1,8 @@
 """Run tab: start and stop the conversation, and speak a line by hand."""
+import os
+
 import gradio as gr
+from gradio.utils import get_upload_folder
 
 from ...events import RUN, SETTING, SPEECH
 from ..feedback import note, warn
@@ -79,39 +82,51 @@ def manual_say(app, speaker, text):
 
 
 def say_from_mic(app, speaker, audio_path):
-    """Transcribe a recording and speak it as `speaker`, immediately.
+    """Transcribe an uploaded take and speak it as `speaker`, immediately.
 
-    A generator: transcription takes a second or two, and a button that sits
-    dead for that long reads as broken. Yields progress to the action line,
-    then clears the recorder so the next take does not append to the last.
+    audio_path arrives as a string in a hidden textbox, written by the recorder
+    in ui/mic.py after it POSTs the blob to gradio's upload endpoint. A
+    generator, because transcription takes a second or two and a control that
+    sits dead for that long reads as broken.
 
     There is no review step by choice -- this is the "just talk" path. Whisper
     mistakes go out loud, which is the trade; the transcript is written to the
     event log either way so you can see what it actually heard.
     """
-    # Bound to `change`, which fires for programmatic updates as well as user
-    # ones -- including this handler clearing the recorder on its way out. The
-    # empty case therefore yields two no-op updates: leaving the recorder
-    # untouched is what stops that second pass from starting a third.
-    if not audio_path:
+    # Fires on change, including this handler clearing the field on its way
+    # out. Two no-op updates end that cycle rather than starting another.
+    if not audio_path or not str(audio_path).strip():
         yield gr.update(), gr.update()
         return
+    audio_path = str(audio_path).strip()
+
+    # The path arrives from the browser, so it decides what the server opens.
+    # Only files gradio itself just wrote are acceptable; without this, anyone
+    # who can reach the page could name /etc/passwd and have it fed to ffmpeg.
+    # Single-user app on localhost today, but the repo is public and this is
+    # one line.
+    cache = os.path.realpath(get_upload_folder())
+    if os.path.commonpath([os.path.realpath(audio_path), cache]) != cache:
+        app.events.add(SPEECH, f"rejected mic path outside the upload cache: {audio_path}")
+        yield warn("That recording did not come from this page."), gr.update(value="")
+        return
+
     if not speaker:
-        yield warn("Pick a speaker first."), gr.update(value=None)
+        yield warn("Pick a speaker first."), gr.update(value="")
         return
 
     ok, why = app.whisper.available()
     if not ok:
-        yield warn(why), gr.update()
+        yield warn(why), gr.update(value="")
         return
 
     yield "Transcribing...", gr.update()
     text, err = app.whisper.transcribe(audio_path)
     if err:
         app.events.add(SPEECH, f"transcription failed - {err}")
-        yield warn(err), gr.update(value=None)
+        yield warn(err), gr.update(value="")
         return
 
     app.events.add(SPEECH, f"heard: {text}")
-    # Clear the recorder in the same update that reports the result.
-    yield _speak_as(app, speaker, text), gr.update(value=None)
+    # Clear the field in the same update that reports the result.
+    yield _speak_as(app, speaker, text), gr.update(value="")

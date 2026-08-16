@@ -207,11 +207,28 @@ Typing is the only input path — there is no speech recognition. See
 
 ### Speaking instead of typing
 
-Under **Say a line as** there is a microphone. Record, and the take is
-transcribed by whisper.cpp on the CPU and spoken by the chosen speaker
-**immediately** — there is no review step, so what Whisper heard is what goes
-out. Every transcript is written to the event log on **Diagnostics**, so you
-can always see what it actually heard, including on a failure.
+Under **Say a line as** there is a microphone: pick an input, press Record,
+press it again to stop. The take is transcribed by whisper.cpp on the CPU and
+spoken by the chosen speaker **immediately** — there is no review step, so what
+Whisper heard is what goes out. Every transcript is written to the event log on
+**Diagnostics**, so you can always see what it actually heard, including on a
+failure. The **File** button sends an audio file down the same path.
+
+Two things about it are deliberate, and both come from the same afternoon of
+debugging:
+
+- **It is not a `gr.Audio`.** Gradio's recorder hands the finished clip to its
+  own player, which decodes it — measured at roughly 3x realtime here, so a
+  six-second line froze the page for twenty seconds. There is no option to skip
+  that. This recorder never puts the audio in a component: it POSTs the blob to
+  gradio's upload endpoint and passes the server path on, so nothing decodes it
+  in the browser. See `deadinternet/ui/mic.py`.
+- **The device is chosen explicitly, and there is a level meter.**
+  `getUserMedia({audio: true})` resolves to *Chrome's* default input, not the
+  system's. On a machine with several inputs that is easily an unplugged
+  socket, which records perfectly formed silence — and then Whisper gets blamed
+  for a bad transcription. The meter shows whether anything is arriving before
+  you speak, and a silent take is reported as silent.
 
 It needs `./setup-whisper.sh`; until then the mic reports that it is not set up
 and **Diagnostics** shows `whisper: not set up`. The rest of the app does not
