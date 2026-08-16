@@ -114,6 +114,7 @@ def build(app):
                 u.man_speaker = run.man_speaker
                 u.man_text = run.man_text
                 u.man_go = run.man_go
+                u.man_mic = run.man_mic
             with gr.Tab("Speakers"):
                 speakers = build_speakers(app)
                 u.s_roster = speakers.s_roster
@@ -259,6 +260,11 @@ def build(app):
         u.man_go.click(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
         u.r_enabled.change(bound(t_run.set_enabled, app), u.r_enabled, u.sb_action)
         u.man_text.submit(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
+        # stop_recording, not change: change also fires while the recorder is
+        # being cleared, which would transcribe an empty take on every send.
+        u.man_mic.stop_recording(bound(t_run.say_from_mic, app),
+                                 [u.man_speaker, u.man_mic],
+                                 [u.sb_action, u.man_mic])
         u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
         # Same two handlers the Inputs tab uses; they take the text as an
         # argument, so a second box on this tab needs nothing else.

@@ -278,6 +278,13 @@ class Settings:
     tts_model: str = "models/qwen-talker-1.7b-base-Q8_0.gguf"
     tts_codec: str = "models/qwen-tokenizer-12hz-F32.gguf"
     tts_lang: str = "English"
+    # Microphone input on the Run tab. Built by ./setup-whisper.sh; absent by
+    # default, in which case the mic just reports it is not set up. CPU only --
+    # see the note at the top of deadinternet/transcribe.py.
+    whisper_binary: str = "whisper.cpp/build/bin/whisper-cli"
+    whisper_model: str = "whisper.cpp/models/ggml-small.en.bin"
+    # whisper.cpp language code, not the TTS language name.
+    whisper_lang: str = "en"
     mode: str = MODE_PODCAST
     topic: str = "whatever comes to mind"
     # Who pinned the current topic, and where. Empty when the topic was typed

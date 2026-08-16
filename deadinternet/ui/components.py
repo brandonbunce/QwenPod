@@ -79,6 +79,7 @@ class RunPanel:
     man_speaker: Any
     man_text: Any
     man_go: Any
+    man_mic: Any
 
 
 @dataclass(frozen=True)

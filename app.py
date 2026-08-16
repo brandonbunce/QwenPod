@@ -24,6 +24,7 @@ from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
                               OpenAIClient)
+from deadinternet.transcribe import Whisper
 from deadinternet.tts import TTSClient
 from deadinternet.ui import APP_CSS, build
 
@@ -49,6 +50,7 @@ class DeadInternetApp:
             s.ollama_model = args.model
 
         self.tts = TTSClient(s.tts_url)
+        self.whisper = Whisper(ROOT, s.whisper_binary, s.whisper_model, s.whisper_lang)
         # Kept alongside the active client so the UI can list Ollama models
         # even while OpenAI is selected.
         self.ollama = OllamaClient(s.ollama_url, s.ollama_model)
@@ -390,7 +392,7 @@ class DeadInternetApp:
         """Kick off a history scan. Returns (future, progress_dict) so the UI
         can stream progress instead of blocking for minutes."""
         if not self.runtime or not self.runtime.client.is_ready():
-            raise RuntimeError("Connect the bot first (section 1).")
+            raise RuntimeError("Connect the bot on the Outputs tab first.")
         if not (handle or "").strip():
             raise RuntimeError("Enter a Discord handle.")
         progress = {}
@@ -442,7 +444,7 @@ class DeadInternetApp:
         if self.director and self.director.running:
             return True, ""
         if not self.director:
-            return False, "Connect the bot first (section 1)."
+            return False, "Connect the bot on the Outputs tab first."
 
         manual = self.state.settings.mode == "manual"
         roster = self.state.active() if not manual else self.state.restorable()
@@ -537,6 +539,10 @@ class DeadInternetApp:
             ok, why = False, str(e)
         label = "ollama" if self.state.settings.provider == PROVIDER_OLLAMA else "openai"
         rows.append((label, ok, "" if ok else (why or "unavailable")))
+        # Optional: absent until ./setup-whisper.sh has been run, and the app
+        # is perfectly usable without it, so a miss reads as "off" not "down".
+        w_ok, w_why = self.whisper.available()
+        rows.append(("whisper", w_ok, "" if w_ok else "not set up"))
         # This process answered, or you would not be reading this.
         rows.append(("this server", True, ""))
 

@@ -219,6 +219,16 @@ def build_run(app, init_names):
                 man_speaker = gr.Dropdown(choices=init_names, label="Speaker", scale=1)
                 man_text = gr.Textbox(label="Say this", scale=3)
                 man_go = gr.Button("Say", scale=1, variant="primary")
+            # Speak instead of typing. Transcribed by whisper.cpp on the CPU and
+            # said straight away -- there is no review step, so what Whisper
+            # heard is what goes out. The event log records every transcript.
+            man_mic = gr.Audio(
+                sources=["microphone"], type="filepath", label=None,
+                container=False, elem_classes=["mic-row"])
+            gr.Markdown(
+                "_Record and it is transcribed and spoken as the chosen speaker "
+                "immediately. Needs `./setup-whisper.sh`; **Diagnostics** shows "
+                "whether it is set up._", elem_classes=["mic-hint"])
 
     return RunPanel(
         m_mode=m_mode,
@@ -236,6 +246,7 @@ def build_run(app, init_names):
         man_speaker=man_speaker,
         man_text=man_text,
         man_go=man_go,
+        man_mic=man_mic,
     )
 
 

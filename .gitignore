@@ -40,3 +40,6 @@ tts-server.log
 *.RECOVERED
 *.CORRUPT-*
 *.tmp
+
+# whisper.cpp checkout -- rebuilt by ./setup-whisper.sh, never committed
+whisper.cpp/

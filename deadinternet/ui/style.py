@@ -81,6 +81,12 @@ APP_CSS = """
 .transcript-box p, .queue-box p, .status-box p { margin: 0.25rem 0; }
 .topic-box { font-size: 1.02rem; }
 
+/* ---- microphone ------------------------------------------------------ */
+/* The recorder is a full Audio component; without a cap it reserves the same
+   vertical space as a waveform editor for what is one button most of the time. */
+.mic-row { max-height: 78px; }
+.mic-hint { font-size: 0.8rem; margin-top: -0.3rem; opacity: 0.75; }
+
 /* The event log is a Textbox so arbitrary message text cannot be read as
    markdown; monospace keeps its timestamp column aligned. */
 .log-box textarea {

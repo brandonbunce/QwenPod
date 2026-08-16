@@ -27,6 +27,18 @@ After that, rebuild just what the app uses:
 ./buildapp.sh
 ```
 
+Optional, for the microphone on the Run tab:
+
+```bash
+./setup-whisper.sh            # small.en (466 MB); pass base.en for a faster, rougher one
+```
+
+Clones and builds whisper.cpp into a gitignored `whisper.cpp/`, CPU only. Not a
+submodule on purpose: `.gitmodules` is upstream's file, so an entry there would
+put a merge conflict in the path of every upstream pull. CPU on purpose too --
+the card is the scarce resource here, not the CPU, and a 9950X does 11 seconds
+of speech in about one second with the GPU untouched.
+
 Python side, once:
 
 ```bash
@@ -159,7 +171,7 @@ exactly when you are looking at some other tab. The action line below it does
 
 | Tab | What it holds |
 | --- | --- |
-| `Run` | transport, mode, current topic and who's talking on the left; the queue, topic injection, transcript and "say a line as" on the right |
+| `Run` | transport, mode, current topic and who's talking on the left; the queue, topic injection, transcript and "say a line as" (typed **or** spoken) on the right |
 | `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
 | `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
 | `Outputs` | where the audio goes. Connect the bot and join a voice channel here |
@@ -192,6 +204,22 @@ wherever you have scrolled to.
 
 Typing is the only input path — there is no speech recognition. See
 *No speech input* under Known limitations.
+
+### Speaking instead of typing
+
+Under **Say a line as** there is a microphone. Record, and the take is
+transcribed by whisper.cpp on the CPU and spoken by the chosen speaker
+**immediately** — there is no review step, so what Whisper heard is what goes
+out. Every transcript is written to the event log on **Diagnostics**, so you
+can always see what it actually heard, including on a failure.
+
+It needs `./setup-whisper.sh`; until then the mic reports that it is not set up
+and **Diagnostics** shows `whisper: not set up`. The rest of the app does not
+care whether it is there.
+
+Two settings in `deadinternet.json` if you want a different model:
+`whisper_binary`, `whisper_model`, and `whisper_lang` (a whisper.cpp language
+code like `en`, not the TTS language name).
 
 The manual **Say** box works in any mode, jumps the queue, and starts the
 director itself — no need to press Start first. It still needs the bot
@@ -420,10 +448,15 @@ discord.py's voice logging is forwarded into `app.log` (`discord.voice_state`
 and `discord.gateway` at INFO). The close code is the only explanation of why
 a call ended and it exists nowhere else; without the bridge a drop is silent.
 
-### No speech input
+### No speech input *from Discord*
 
-The bot is **output only**. Speech recognition was removed along with the
-whole receive path; `faster-whisper` and `discord-ext-voice-recv` are
+You can speak into the app: the microphone under **Say a line as** transcribes
+locally with whisper.cpp and says the result as a chosen speaker. What follows
+is about the other direction — the bot hearing people **in the voice channel**,
+which remains impossible for a reason unrelated to transcription.
+
+The bot is **output only** on the Discord side. Speech recognition was removed
+along with the whole receive path; `faster-whisper` and `discord-ext-voice-recv` are
 uninstalled (they and their exclusive dependencies — `ctranslate2`,
 `onnxruntime`, `av`, `tokenizers` — were 300 MB of the venv).
 
@@ -558,6 +591,8 @@ the next speaker sees it.
 | `deadinternet/audio.py` | loudness normalisation, duration cap |
 | `deadinternet/ui/` | Gradio interface: panels, per-tab handlers, styling |
 | `deadinternet/events.py` | in-memory event log shown on Diagnostics |
+| `deadinternet/transcribe.py` | whisper.cpp wrapper for the Run-tab microphone |
+| `setup-whisper.sh` | clone + build whisper.cpp, fetch a model |
 | `deadinternet/tests/` | smoke test: the Gradio page constructs, with every handler wired |
 | `buildapp.sh` | rebuild only `tts-server`, the one binary the app uses |
 | `requirements-app.txt` | Python dependencies, gradio pinned exactly |
