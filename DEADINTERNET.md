@@ -207,15 +207,28 @@ Typing is the only input path — there is no speech recognition. See
 
 ### Speaking instead of typing
 
-Under **Say a line as** there is a microphone: pick an input, press Record,
-press it again to stop. The take is transcribed by whisper.cpp on the CPU and
-spoken by the chosen speaker **immediately** — there is no review step, so what
-Whisper heard is what goes out. Every transcript is written to the event log on
-**Diagnostics**, so you can always see what it actually heard, including on a
-failure. The **File** button sends an audio file down the same path.
+Under **Say a line as** there is a microphone: pick an input, press Record, and
+talk. Each transcript is spoken by the chosen speaker **immediately** — there is
+no review step, so what Whisper heard is what goes out. Every transcript is
+written to the event log on **Diagnostics**, so you can always see what it
+actually heard, including on a failure. The **File** button sends an audio file
+down the same path.
 
-Two things about it are deliberate, and both come from the same afternoon of
-debugging:
+**You do not press Stop between sentences.** Recording is continuous, and a
+voice-activity detector cuts the take wherever you pause for longer than the
+gap chosen next to the device list (0.8s by default). Each piece is transcribed
+and spoken while you carry on with the next one. Stop ends the session and
+sends whatever is left, if anything was said in it. A take with nothing in it is
+never sent, so a pause in the wrong place costs nothing.
+
+Clips are handled strictly one at a time, in the order they were said: the page
+waits for the server to finish with one before releasing the next, and the
+handler is pinned to `concurrency_limit=1`. Without both, four sentences would
+transcribe in parallel and be spoken in whatever order Whisper happened to
+finish them.
+
+Three things about it are deliberate, and the first two come from the same
+afternoon of debugging:
 
 - **It is not a `gr.Audio`.** Gradio's recorder hands the finished clip to its
   own player, which decodes it — measured at roughly 3x realtime here, so a
@@ -228,7 +241,16 @@ debugging:
   system's. On a machine with several inputs that is easily an unplugged
   socket, which records perfectly formed silence — and then Whisper gets blamed
   for a bad transcription. The meter shows whether anything is arriving before
-  you speak, and a silent take is reported as silent.
+  you speak, and a silent take is reported as silent. It turns green when the
+  detector counts what it is hearing as speech, so what you see is exactly what
+  decides where the cuts go.
+- **Levels come off the audio thread, not `requestAnimationFrame`.** rAF does
+  not fire at all in a hidden tab, and the detector is the only thing that ends
+  a take — on rAF, switching tabs mid-sentence froze it, so nothing was cut or
+  sent and the segment grew past its own 25s cap, which was checked in the same
+  dead loop. An `AudioWorklet` runs wherever the audio does. There is a
+  `ScriptProcessorNode` fallback; if both fail the mic says so and degrades to
+  one take per press rather than pretending to listen.
 
 It needs `./setup-whisper.sh`; until then the mic reports that it is not set up
 and **Diagnostics** shows `whisper: not set up`. The rest of the app does not

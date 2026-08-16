@@ -264,9 +264,17 @@ def build(app):
         # The recorder in ui/mic.py writes the uploaded file's server path into
         # this hidden textbox and fires an input event; that is what gets us
         # back into gradio without a gr.Audio anywhere near the clip.
+        #
+        # concurrency_limit=1 because the recorder now cuts a continuous take
+        # into one clip per sentence: with the app-wide limit of 4, four of them
+        # would transcribe in parallel and be spoken in whatever order whisper
+        # happened to finish. The recorder also waits for this handler to clear
+        # the textbox before releasing the next clip, so this is the second of
+        # two locks -- the one that still holds if that handshake times out.
         u.man_mic.change(bound(t_run.say_from_mic, app),
                          [u.man_speaker, u.man_mic],
-                         [u.sb_action, u.man_mic])
+                         [u.sb_action, u.man_mic],
+                         concurrency_limit=1)
         u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
         # Same two handlers the Inputs tab uses; they take the text as an
         # argument, so a second box on this tab needs nothing else.

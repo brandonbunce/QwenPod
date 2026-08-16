@@ -89,14 +89,16 @@ APP_CSS = """
 
 #qp-mic { margin-top: 0.25rem; }
 .qp-mic-row { display: flex; align-items: center; gap: 0.4rem; }
-#qp-mic-dev {
-  flex: 1 1 auto; min-width: 0;
+#qp-mic-dev, #qp-mic-gap {
   background: var(--input-background-fill);
   color: var(--body-text-color);
   border: 1px solid var(--border-color-primary);
   border-radius: var(--radius-sm);
   padding: 0.3rem 0.4rem; font-size: 0.85rem;
 }
+/* The device name is the long one; the pause is four fixed options. */
+#qp-mic-dev { flex: 1 1 auto; min-width: 0; }
+#qp-mic-gap { flex: 0 0 auto; }
 #qp-mic-rec, #qp-mic-file-label {
   flex: 0 0 auto; cursor: pointer; white-space: nowrap;
   background: var(--button-secondary-background-fill);

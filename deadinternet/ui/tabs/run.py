@@ -89,6 +89,12 @@ def say_from_mic(app, speaker, audio_path):
     generator, because transcription takes a second or two and a control that
     sits dead for that long reads as broken.
 
+    One call is one sentence, not one press: the recorder cuts a continuous
+    take at every pause. Clearing the textbox on the way out is therefore part
+    of the protocol and not just tidiness -- the recorder watches for it before
+    releasing the next clip, which is what keeps the lines in the order they
+    were said.
+
     There is no review step by choice -- this is the "just talk" path. Whisper
     mistakes go out loud, which is the trade; the transcript is written to the
     event log either way so you can see what it actually heard.
