@@ -82,9 +82,12 @@ APP_CSS = """
 .topic-box { font-size: 1.02rem; }
 
 /* ---- microphone ------------------------------------------------------ */
-/* The recorder is a full Audio component; without a cap it reserves the same
-   vertical space as a waveform editor for what is one button most of the time. */
-.mic-row { max-height: 78px; }
+/* Do NOT cap the height of this component. An earlier version set
+   max-height: 78px to stop the recorder reserving waveform-editor space, but
+   gradio's own .block sets overflow: hidden -- so the cap silently clipped the
+   bottom 18px, which is exactly where Stop, pause and Resume live. Recording
+   started, the waveform moved, and there was no way to finish the take. Let it
+   size itself. */
 .mic-hint { font-size: 0.8rem; margin-top: -0.3rem; opacity: 0.75; }
 
 /* The event log is a Textbox so arbitrary message text cannot be read as
