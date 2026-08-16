@@ -222,18 +222,27 @@ def build_run(app, init_names):
             # Speak instead of typing. Transcribed by whisper.cpp on the CPU and
             # said straight away -- there is no review step, so what Whisper
             # heard is what goes out. The event log records every transcript.
-            # Everything decorative is off. This clip exists for about a
-            # second before it is transcribed and discarded, so the live
-            # waveform and the trim editor are pure cost -- and the live
-            # waveform in particular redraws every frame while capturing,
-            # which is the expensive thing on this path. Recording at 16 kHz
-            # is what whisper.cpp wants anyway, so it also cuts the blob the
-            # browser has to upload.
+            # sample_rate MUST match the sound card, and 48000 is what this
+            # machine runs (pipewire here is pinned to it, and it is the modern
+            # default generally). Gradio builds its decode context as
+            # `new AudioContext({sampleRate: waveform_options.sample_rate || 44100})`,
+            # and a context whose rate the hardware cannot supply forces Chrome
+            # through a resampler. A profile of a single recording showed 13.5s
+            # of one 13.6s main-thread stall inside getChannelData because of
+            # it -- the page locks up on stop, and the resampled audio comes out
+            # as something Whisper cannot read. The gradio default of 44100 is
+            # itself a mismatch on 48 kHz hardware, so this has to be set, not
+            # left off. whisper.cpp still gets 16 kHz; ffmpeg does that
+            # conversion server-side where it costs a few milliseconds.
+            #
+            # The rest is decoration this clip never needs: it is transcribed
+            # and discarded within a second, so there is no waveform to watch
+            # and nothing to trim.
             man_mic = gr.Audio(
                 sources=["microphone", "upload"], type="filepath", label=None,
                 container=False, editable=False,
                 waveform_options=gr.WaveformOptions(
-                    show_recording_waveform=False, sample_rate=16000),
+                    show_recording_waveform=False, sample_rate=48000),
                 elem_classes=["mic-row"])
             gr.Markdown(
                 "_Record and it is transcribed and spoken as the chosen speaker "
