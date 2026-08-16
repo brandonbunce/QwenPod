@@ -89,11 +89,15 @@ def say_from_mic(app, speaker, audio_path):
     mistakes go out loud, which is the trade; the transcript is written to the
     event log either way so you can see what it actually heard.
     """
-    if not speaker:
-        yield warn("Pick a speaker first."), gr.update()
-        return
+    # Bound to `change`, which fires for programmatic updates as well as user
+    # ones -- including this handler clearing the recorder on its way out. The
+    # empty case therefore yields two no-op updates: leaving the recorder
+    # untouched is what stops that second pass from starting a third.
     if not audio_path:
-        yield warn("No recording - hold the mic button and speak first."), gr.update()
+        yield gr.update(), gr.update()
+        return
+    if not speaker:
+        yield warn("Pick a speaker first."), gr.update(value=None)
         return
 
     ok, why = app.whisper.available()

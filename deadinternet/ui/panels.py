@@ -223,7 +223,7 @@ def build_run(app, init_names):
             # said straight away -- there is no review step, so what Whisper
             # heard is what goes out. The event log records every transcript.
             man_mic = gr.Audio(
-                sources=["microphone"], type="filepath", label=None,
+                sources=["microphone", "upload"], type="filepath", label=None,
                 container=False, elem_classes=["mic-row"])
             gr.Markdown(
                 "_Record and it is transcribed and spoken as the chosen speaker "

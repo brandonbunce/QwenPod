@@ -260,11 +260,16 @@ def build(app):
         u.man_go.click(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
         u.r_enabled.change(bound(t_run.set_enabled, app), u.r_enabled, u.sb_action)
         u.man_text.submit(bound(t_run.manual_say, app), [u.man_speaker, u.man_text], u.sb_action)
-        # stop_recording, not change: change also fires while the recorder is
-        # being cleared, which would transcribe an empty take on every send.
-        u.man_mic.stop_recording(bound(t_run.say_from_mic, app),
-                                 [u.man_speaker, u.man_mic],
-                                 [u.sb_action, u.man_mic])
+        # change, not stop_recording. stop_recording fires the moment the
+        # browser stops capturing, which is before the blob has been uploaded
+        # and turned into a server-side path -- the handler then receives None
+        # and there is nothing to transcribe. change fires once the value is
+        # actually set, whether it arrived from the microphone or a dropped
+        # file. say_from_mic no-ops on an empty value, which is what stops the
+        # clear-the-recorder update below from re-triggering it.
+        u.man_mic.change(bound(t_run.say_from_mic, app),
+                         [u.man_speaker, u.man_mic],
+                         [u.sb_action, u.man_mic])
         u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
         # Same two handlers the Inputs tab uses; they take the text as an
         # argument, so a second box on this tab needs nothing else.
