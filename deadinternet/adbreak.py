@@ -15,7 +15,7 @@ import random
 import time
 
 from .audio import bed_under
-from .config import music_tracks
+from .config import Turn, music_tracks
 from .events import RUN, VOICE
 
 
@@ -122,8 +122,22 @@ class AdBreak:
         self.debug["last_error"] = None
         self.debug["breaks"] += 1
         self.log(f"[adbreak] {reader.name}: {text[:80]}")
+
+        # A spoken line, recorded the way every other spoken line is. add_turn
+        # is what puts words in the Run tab's transcript *and* in the event
+        # log's speech lines; an ad that skipped it was audible and then
+        # invisible everywhere afterwards.
+        #
+        # Safe for context: the segment was captured before this, and
+        # _topic_start is reset after the switch below, so this turn falls
+        # between the two and is analysed as part of neither segment.
+        self.state.add_turn(Turn(speaker=reader.name, text=text))
         if self.events:
-            self.events.add(RUN, f"ad break - {reader.name}: {text}")
+            # Marks the break itself. The words are already in the log via
+            # add_turn, so this carries what that cannot: that it was an ad,
+            # and what it played over.
+            self.events.add(RUN, f"ad break read by {reader.name}"
+                                 + (f" over {info['track']}" if info.get("bed") else " (no music)"))
 
         await self.speak(reader.name, text, wav)
         return True

@@ -668,13 +668,29 @@ class Director:
             turns = segment_lines(self.state.transcript, self._topic_start)
         roster = self.state.active()
         evolving = None
+
+        # Only close out a segment that happened. Two reasons, both from
+        # pressing "Switch topic now":
+        #
+        #  - With nothing said yet there is nothing to advertise and nothing to
+        #    learn from, and the ad would be about a discussion that did not
+        #    occur.
+        #  - While the director is stopped, rotate_topic_now() runs this inline
+        #    and blocks the web request on fut.result(60). The evolution wait
+        #    alone defaults to 60s, so the break could outlast the budget and
+        #    report a failure for a switch that was actually fine.
+        if not self.running or not any(
+                getattr(t, "kind", "bot") == "bot" for t in turns):
+            self.log("[adbreak] nothing to close out - going straight to the topic")
+            turns = []
+
         try:
-            if s.evolve_enabled:
+            if s.evolve_enabled and turns:
                 # Started, not awaited: the whole point is that it runs behind
                 # the ad rather than in front of the next topic.
                 evolving = asyncio.create_task(
                     self.adbreak.evolve(outgoing_topic, turns))
-            if s.adbreak_enabled:
+            if s.adbreak_enabled and turns:
                 self.status = "ad break"
                 await self.adbreak.play(outgoing_topic, turns, roster)
             if evolving is not None:

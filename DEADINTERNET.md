@@ -403,6 +403,18 @@ If the rewrites overrun *Seconds to hold the next topic*, the show carries on
 anyway and they land whenever they finish — `system_prompt()` is read fresh every
 turn, so a late result still applies, just a segment later. Dead air is worse.
 
+The ad read is a spoken line like any other: it goes into the Run tab's
+transcript and the event log's `speech` lines, with a separate `run` entry
+recording that it was an ad and what it played over. It is added *between* the
+two segments, so it belongs to neither and never shows up in what a character
+learns from.
+
+**Pressing "Switch topic now" runs the break too** — it is the same code path as
+the timer. Two exceptions, both so a manual switch is not punished: nothing runs
+if the segment has no host lines in it yet, and nothing runs while the director
+is stopped. In that stopped case the switch happens inline on the web request,
+which is capped at 60s — and the evolution wait alone defaults to 60.
+
 Everything about the break degrades quietly: no music uploaded plays it dry, and
 a failed ad — no LLM, no tts-server, an empty generation — skips the break
 entirely. None of it can stop the topic rotating.
