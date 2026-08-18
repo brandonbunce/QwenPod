@@ -74,6 +74,10 @@ class DeadInternetApp:
         if provider == PROVIDER_OPENAI:
             return OpenAIClient(s.openai_url, s.openai_model)
         self.ollama.model = s.ollama_model
+        # Read here rather than at construction: the Ollama client is shared
+        # and long-lived, so rebuild_llm() is what makes a settings change
+        # take effect without restarting the app.
+        self.ollama.think = s.thinking
         return self.ollama
 
     def rebuild_llm(self):
@@ -517,6 +521,11 @@ class DeadInternetApp:
             bits.append("voice: disconnected")
         if self.director:
             bits.append(f"director: {self.director.status}")
+        # Only when on. It costs seconds a line, so when speech has gone slow
+        # this is the first thing worth ruling in or out -- and a strip that
+        # says "thinking: off" all day is one nobody reads.
+        if self.state.settings.thinking:
+            bits.append("**thinking**")
         bits.append(self.vram_line())
         busy = gpu_busy_percent()
         if busy is not None:

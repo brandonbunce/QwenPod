@@ -137,6 +137,7 @@ class BehaviourPanel:
     m_bye_on: Any
     m_bye_tpl: Any
     m_provider: Any
+    m_think: Any
     m_refresh_models: Any
     m_model: Any
     m_oa_model: Any

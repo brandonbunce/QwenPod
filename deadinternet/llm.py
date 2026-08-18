@@ -19,6 +19,12 @@ KEEP_ALIVE = "30m"
 # last complete sentence.
 MIN_SENTENCE_CHARS = 15
 
+# How much more room a request gets when the model is allowed to think. The
+# per-line budget is sized for one or two spoken sentences; reasoning has to
+# fit *inside* the same budget, so without this the model spends all of it
+# thinking and returns empty content.
+THINK_BUDGET = 8
+
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENAI = "openai"
 PROVIDERS = [PROVIDER_OLLAMA, PROVIDER_OPENAI]
@@ -29,6 +35,8 @@ class BaseLLM:
         self.model = model
         self.timeout = timeout
         self.http = requests.Session()
+        # Providers that cannot do it leave this False and ignore it.
+        self.think = False
 
     # ---- provider hooks ------------------------------------------------
     def models(self):
@@ -38,7 +46,13 @@ class BaseLLM:
         """(ok, message) -- whether this backend can actually be used."""
         return True, ""
 
-    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None) -> str:
+    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
+              think=None) -> str:
+        """think: None follows the client's setting, False forces it off.
+
+        Forcing it off is for calls where reasoning buys nothing and the
+        latency is felt -- the router, in practice.
+        """
         raise NotImplementedError
 
     def _image_message(self, text: str, b64: str, mime: str) -> dict:
@@ -255,6 +269,10 @@ class BaseLLM:
                 num_predict=40,
                 temperature=0.2,
                 fmt="json",
+                # Never think here. This is a one-word classification on the
+                # critical path of answering a real person, and every second
+                # of it is silence in the channel.
+                think=False,
             )
             pick = json.loads(raw).get("speaker", "")
         except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError, RuntimeError):
@@ -282,6 +300,10 @@ class OllamaClient(BaseLLM):
     def __init__(self, base_url: str, model: str, timeout: int = 180):
         super().__init__(model, timeout)
         self.base_url = base_url.rstrip("/")
+        # Whether to let the model reason before answering. Set from settings
+        # by app.rebuild_llm(); this client outlives any one setting change,
+        # so it is an attribute rather than a constructor argument.
+        self.think = False
 
     def models(self):
         try:
@@ -305,16 +327,17 @@ class OllamaClient(BaseLLM):
         # the text alone, which is why this cannot hard-fail.
         return {"role": "user", "content": text, "images": [b64]}
 
-    def _post(self, messages, num_predict, temperature, fmt=None):
+    def _post(self, messages, num_predict, temperature, fmt=None, think=False):
         payload = {
             "model": self.model,
             "messages": messages,
             "stream": False,
             "keep_alive": KEEP_ALIVE,
-            # Reasoning models otherwise spend the whole budget in `thinking`
-            # and hand back empty content -- and the latency would wreck the
-            # pacing of a live call anyway. Models without thinking ignore it.
-            "think": False,
+            # Off by default: a reasoning model otherwise spends the whole
+            # budget in `thinking` and hands back empty content, and the
+            # latency shows up as dead air in a live call. Models with no
+            # thinking mode ignore the field either way.
+            "think": bool(think),
             "options": {"num_predict": num_predict, "temperature": temperature},
         }
         if fmt:
@@ -323,15 +346,22 @@ class OllamaClient(BaseLLM):
         r.raise_for_status()
         return r.json().get("message", {})
 
-    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None) -> str:
-        msg = self._post(messages, num_predict, temperature, fmt)
+    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
+              think=None) -> str:
+        want = self.think if think is None else think
+        # Thinking has to fit inside num_predict alongside the answer, so a
+        # request that asks for it is given room for it up front rather than
+        # coming back empty and paying for a second round trip every line.
+        budget = num_predict * THINK_BUDGET if want else num_predict
+        msg = self._post(messages, budget, temperature, fmt, want)
         content = (msg.get("content") or "").strip()
         if content:
             return content
-        # Some builds honour thinking regardless. Retry once with enough room
-        # to finish reasoning and still emit an answer.
-        if msg.get("thinking"):
-            msg = self._post(messages, num_predict * 8, temperature, fmt)
+        # Some builds think regardless of the flag. Retry once with enough
+        # room to finish reasoning and still emit an answer.
+        if msg.get("thinking") and budget == num_predict:
+            msg = self._post(messages, num_predict * THINK_BUDGET, temperature,
+                             fmt, want)
             content = (msg.get("content") or "").strip()
         return content
 
@@ -398,7 +428,13 @@ class OpenAIClient(BaseLLM):
             payload["response_format"] = {"type": "json_object"}
         return payload
 
-    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None) -> str:
+    def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
+              think=None) -> str:
+        # think is accepted and ignored: it maps onto Ollama's `think` field,
+        # which has no equivalent here. Reasoning on an OpenAI-compatible
+        # endpoint is a property of the model you pick, not of the request.
+        # Accepting it is not optional -- route() passes think=False on every
+        # provider, and a signature that refuses it fails the turn.
         if not self.api_key:
             raise RuntimeError(f"{self.api_key_env} is not set")
         headers = {"Authorization": f"Bearer {self.api_key}"}

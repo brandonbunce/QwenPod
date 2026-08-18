@@ -205,6 +205,27 @@ wherever you have scrolled to.
 Typing is the only input path — there is no speech recognition. See
 *No speech input* under Known limitations.
 
+### Letting the model think
+
+**Let the model think first** on the **Behaviour** tab sets Ollama's `think` on
+every request. Off by default, and worth understanding before turning it on:
+
+- **It costs seconds per line**, and in a live voice call that is dead air. The
+  masthead shows `thinking` while it is on, so a conversation that has gone
+  sluggish can be explained without hunting for the setting.
+- **Every line gets 8x the token budget.** Reasoning has to fit inside
+  `num_predict` alongside the answer, so at the normal per-line budget a
+  reasoning model spends all of it thinking and returns nothing. The raise
+  happens up front rather than after an empty first attempt.
+- **The interrupt router never thinks**, whatever this is set to. It is a
+  one-word classification on the path of answering a real person, and every
+  second of it is silence in the channel.
+- **Ollama only.** An OpenAI-compatible endpoint has no equivalent field —
+  reasoning there is a property of the model you pick, not of the request. The
+  checkbox is accepted and ignored on that provider.
+- A model with no reasoning mode ignores `think` entirely, so turning this on
+  against `gemma4` changes nothing but the budget.
+
 ### The message queue
 
 Messages are **queued and answered in order**, up to *Messages held at once*

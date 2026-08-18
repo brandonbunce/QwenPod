@@ -507,6 +507,13 @@ def build_behaviour(app):
         m_oa_model = gr.Dropdown(
             choices=[state.settings.openai_model], value=state.settings.openai_model,
             label="OpenAI model", allow_custom_value=True)
+    m_think = gr.Checkbox(
+        value=state.settings.thinking, label="Let the model think first",
+        info="Ollama only - it sets `think` on the request, and a model with no "
+             "reasoning mode ignores it. Every line gets 8x the token budget, "
+             "because the reasoning has to fit inside the same budget as the "
+             "answer. Expect seconds of extra latency per line, which in a live "
+             "call is dead air. The interrupt router never thinks either way.")
 
     gr.Markdown("### Conversation tuning")
     with gr.Row():
@@ -608,6 +615,7 @@ def build_behaviour(app):
         m_bye_on=m_bye_on,
         m_bye_tpl=m_bye_tpl,
         m_provider=m_provider,
+        m_think=m_think,
         m_refresh_models=m_refresh_models,
         m_model=m_model,
         m_oa_model=m_oa_model,

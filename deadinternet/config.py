@@ -300,6 +300,9 @@ class Settings:
     # Cut the bots off the moment a real person posts a message, instead of
     # letting the current line finish first. Text is the only input path --
     # there is no speech recognition (see DEADINTERNET.md).
+    # Let the LLM reason before answering (Ollama's `think`). Off by default:
+    # it costs seconds per line, which is dead air in a live call.
+    thinking: bool = False
     barge_in: bool = True
     # How many unanswered messages to hold. Everything past this is refused
     # rather than silently replacing something already waiting, which is what

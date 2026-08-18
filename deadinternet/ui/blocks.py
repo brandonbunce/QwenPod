@@ -173,6 +173,7 @@ def build(app):
                 u.m_bye_on = behaviour.m_bye_on
                 u.m_bye_tpl = behaviour.m_bye_tpl
                 u.m_provider = behaviour.m_provider
+                u.m_think = behaviour.m_think
                 u.m_refresh_models = behaviour.m_refresh_models
                 u.m_model = behaviour.m_model
                 u.m_oa_model = behaviour.m_oa_model
@@ -322,6 +323,9 @@ def build(app):
 
         # Behaviour. No Apply button: everything persists as you change it.
         bind(u.m_provider, "provider", "LLM provider", after=_rebuild_note)
+        # after= is load-bearing: the Ollama client is shared and
+        # long-lived, and rebuild_llm() is what copies this onto it.
+        bind(u.m_think, "thinking", "thinking", bool, after=_rebuild_note)
         bind(u.m_model, "ollama_model", "Ollama model", after=_rebuild_note)
         bind(u.m_oa_model, "openai_model", "OpenAI model",
              lambda v: (v or "").strip(), after=_rebuild_note)
