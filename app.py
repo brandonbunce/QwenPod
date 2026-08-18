@@ -8,6 +8,7 @@ Discord client is optional: without a token the cloning tabs work normally.
 """
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,12 @@ from deadinternet.ui import APP_CSS, build
 
 # How long to wait for a freshly launched tts-server to answer.
 TTS_BOOT_TIMEOUT = 120
+
+
+def _is_local(url: str) -> bool:
+    """Is this tts-server on this machine? Used only to decide whether the URL
+    is worth showing -- localhost is the default and says nothing."""
+    return bool(re.search(r"//(127\.0\.0\.1|localhost|\[::1\])\b", url or ""))
 
 
 class DeadInternetApp:
@@ -232,16 +239,25 @@ class DeadInternetApp:
 
     # ---- banner ----------------------------------------------------------
     def banner(self):
+        """The first thing the action line says, before you have done anything.
+
+        Kept short. It shares a line with every button's confirmation, and the
+        old version spent most of it restating a localhost URL and a file
+        extension that are the same on every install.
+        """
+        url = self.state.settings.tts_url
+        # Only worth naming when speech is coming from somewhere other than
+        # this machine, which is the case that would surprise you.
+        where = "" if _is_local(url) else f" at `{url}`"
         try:
-            return f"Connected to `{self.state.settings.tts_url}` - model `{self.tts.model_id()}`"
+            model = re.sub(r"\.gguf$", "", self.tts.model_id())
+            return f"**tts-server** ready{where} — `{model}`"
         except Exception:
             if self._tts_boot and self._tts_boot.is_alive():
-                return (f"**tts-server is starting** at {self.state.settings.tts_url} - "
-                        "watch the log on the Diagnostics tab, then press "
-                        "**Refresh voices**.")
-            return (f"**tts-server not running at {self.state.settings.tts_url}.** "
-                    "Press **Start** in Dead Internet Mode and the app will launch it, "
-                    "or run it yourself (see DEADINTERNET.md).")
+                return ("**tts-server starting** — watch the log on "
+                        "**Diagnostics**, then press **Refresh voices**.")
+            return (f"**tts-server not running**{where or ''} — press **Start**, "
+                    "or launch it yourself (see DEADINTERNET.md).")
 
     def discord_hint(self):
         where = "`.env`" if self.env_file_found else "the environment"

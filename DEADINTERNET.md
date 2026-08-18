@@ -169,7 +169,7 @@ action line    the last thing you did, and why it did or didn't work
 Run · Speakers · Inputs · Outputs · Behaviour · Testing · Diagnostics
 ```
 
-Three rows above the tabs, not four. Name hard left, Refresh and the live status
+Two rows above the tabs, not four. Name hard left, Refresh and the live status
 as a pair on the right, then the action line, then the tabs. (Gradio's `.block`
 sets `width: 100%` and `flex-basis: auto` resolves to it, so the masthead's
 children each claimed the whole row and wrapped onto three lines — `flex:` alone
@@ -181,6 +181,13 @@ The status strip streams and lives above the tabs, so mode and VRAM stay on
 screen wherever you are — a stalled director or a full card is easiest to miss
 exactly when you are looking at some other tab. The action line below it does
 **not** stream: it holds your last action's result until you do something else.
+It closes the header block, so it carries the bottom rule, and a long message
+scrolls inside two lines rather than pushing the tabs down the page.
+
+**Styling either of them: gradio puts `elem_classes` on both the outer `.block`
+and the inner `.prose` div.** A bare `.action-line { padding; border }` is
+applied twice — double padding, and a second bottom rule drawn above the real
+one. Decorate `.action-line.block` and flatten `.action-line.prose`.
 
 | Tab | What it holds |
 | --- | --- |
