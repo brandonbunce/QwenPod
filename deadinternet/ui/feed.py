@@ -82,7 +82,14 @@ def poll(app, last_topic=None):
     state = app.state
     lines = []
     for t in state.recent(20):
-        tag = "**you**" if t.kind == "user" else f"**{t.speaker}**"
+        if t.kind == "user":
+            tag = "**you**"
+        elif t.kind == "ad":
+            # Labelled, or a sponsor read is indistinguishable from the host
+            # saying something very strange.
+            tag = f"**{t.speaker}** _(ad)_"
+        else:
+            tag = f"**{t.speaker}**"
         lines.append(f"{tag}: {t.text}")
     # Rotation rewrites the topic, so push it back into the box -- but only
     # when it actually changed, or the 1.5s feed would fight anyone typing in

@@ -623,6 +623,20 @@ class Director:
         s = self.state.settings
         if not force and not s.topic_rotation:
             return False
+
+        # Paused means paused. The pause-when-empty guard lives further down
+        # the turn loop than this call does, so rotation used to carry on into
+        # an empty channel -- announcing topics, and (once the ad break landed
+        # here) reading a full sponsor spot every few minutes to nobody. The ad
+        # then put its own line in the transcript, which satisfied the "did a
+        # segment happen" check for the next one, so it sustained itself
+        # indefinitely. Left overnight that is all it does.
+        #
+        # force=True still goes through: that is someone pressing Switch topic
+        # now in the web UI, and they can see the channel is empty.
+        if (not force and self.running and s.pause_when_empty
+                and not self.runtime.humans_present()):
+            return False
         # A hand-typed topic does not need a pin pool to switch to.
         if not self._source_weights() and not self._manual_next and not self._prepared:
             self.topic_debug["last_error"] = "no pin channels selected"
@@ -681,6 +695,8 @@ class Director:
         #    report a failure for a switch that was actually fine.
         if not self.running or not any(
                 getattr(t, "kind", "bot") == "bot" for t in turns):
+            # NB "bot" excludes kind="ad" and kind="user": neither an advert
+            # nor someone typing counts as the hosts having had a conversation.
             self.log("[adbreak] nothing to close out - going straight to the topic")
             turns = []
 

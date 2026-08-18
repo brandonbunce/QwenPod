@@ -138,7 +138,12 @@ class AdBreak:
         # Safe for context: the segment was captured before this, and
         # _topic_start is reset after the switch below, so this turn falls
         # between the two and is analysed as part of neither segment.
-        self.state.add_turn(Turn(speaker=reader.name, text=text))
+        # kind="ad", not "bot". It is a real spoken line -- it belongs in the
+        # transcript and the log -- but it is not the show. Marking it keeps it
+        # out of lines_by_speaker (so a character never learns from reading an
+        # advert) and out of the "did a segment actually happen" check, which
+        # an ad would otherwise satisfy for the next ad, forever.
+        self.state.add_turn(Turn(speaker=reader.name, text=text, kind="ad"))
         if self.events:
             # Marks the break itself. The words are already in the log via
             # add_turn, so this carries what that cannot: that it was an ad,
