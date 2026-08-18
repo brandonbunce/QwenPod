@@ -149,10 +149,13 @@ def build_header(app):
     when a stalled director or a full card is easiest to miss. It lives above
     the tabs now, so it is always on screen.
     """
+    # Name hard left; Refresh and the live status as a pair on the right. One
+    # line, so the page is masthead / action line / tabs and nothing else above
+    # the fold.
     with gr.Row(elem_classes=["masthead"]):
         gr.Markdown("# QwenPod", elem_classes=["brand"])
-        sb_status = gr.Markdown("_starting..._", elem_classes=["status-strip"])
         hdr_refresh = gr.Button("Refresh", scale=0, min_width=90)
+        sb_status = gr.Markdown("_starting..._", elem_classes=["status-strip"])
     sb_action = gr.Markdown(app.banner(), elem_classes=["action-line"])
     return HeaderPanel(
         sb_status=sb_status,

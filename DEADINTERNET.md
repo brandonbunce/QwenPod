@@ -163,11 +163,19 @@ process; freeing VRAM afterwards does nothing. You must restart tts-server.
 A persistent masthead over seven tabs:
 
 ```
-QwenPod        mode • voice • listeners • director • vram • gpu     [Refresh]
+QwenPod              [Refresh]  mode • voice • director • vram • gpu
 action line    the last thing you did, and why it did or didn't work
 ─────────────────────────────────────────────────────────────────────
 Run · Speakers · Inputs · Outputs · Behaviour · Testing · Diagnostics
 ```
+
+Three rows above the tabs, not four. Name hard left, Refresh and the live status
+as a pair on the right, then the action line, then the tabs. (Gradio's `.block`
+sets `width: 100%` and `flex-basis: auto` resolves to it, so the masthead's
+children each claimed the whole row and wrapped onto three lines — `flex:` alone
+could not fix that, the width override is what makes it one row.) On a narrow
+window the status drops to its own line rather than being truncated: a VRAM
+warning you cannot read is worse than a taller header.
 
 The status strip streams and lives above the tabs, so mode and VRAM stay on
 screen wherever you are — a stalled director or a full card is easiest to miss

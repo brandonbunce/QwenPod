@@ -23,12 +23,23 @@ APP_CSS = """
   letter-spacing: -0.02em;
   white-space: nowrap;
 }
+/* gradio's .block sets width: 100%, and flex-basis: auto resolves to the width
+   property -- so every child of the masthead claimed the full row and the
+   wrap put each on its own line. Setting flex alone did nothing; the width
+   override is what actually makes this one row. */
+.masthead > * { width: auto !important; }
 .brand { flex: 0 0 auto !important; min-width: 0 !important; }
+
+/* Refresh and the status read as one group on the right. The auto margin does
+   the pushing, so the status must not grow -- if it did it would swallow the
+   free space and the margin would have nothing left to push with. */
+.masthead > button { flex: 0 0 auto !important; margin-left: auto !important; }
 
 /* The live status strip. Bullet-separated rather than piped, and allowed to
    wrap on a narrow window instead of overflowing the row. */
 .status-strip {
-  flex: 1 1 auto !important;
+  flex: 0 1 auto !important;
+  text-align: right;
   font-size: 0.92rem;
   line-height: 1.35;
   color: var(--body-text-color-subdued);
