@@ -1,4 +1,7 @@
 """Behaviour tab: mode, LLM backend, and the conversation-tuning knobs."""
+import os
+import shutil
+
 import gradio as gr
 
 from ...config import MODE_MANUAL, RECOMMENDED
@@ -57,3 +60,50 @@ def refresh_models(app, provider):
     if provider == PROVIDER_OPENAI:
         return gr.update(), gr.update(choices=found), note(f"{len(found)} OpenAI models.")
     return gr.update(choices=found), gr.update(), note(f"{len(found)} Ollama models.")
+
+def music_report(app):
+    """What is in music/, as markdown."""
+    from ...config import music_tracks
+    tracks = music_tracks()
+    if not tracks:
+        return "_No music uploaded - ad breaks will play dry._"
+    return "\n".join(f"- `{os.path.basename(t)}`" for t in tracks)
+
+
+def upload_music(app, files):
+    """Copy uploaded beds into music/. -> (report, action line)."""
+    from ...config import MUSIC_DIR, MUSIC_EXTS
+    if not files:
+        return music_report(app), warn("Nothing uploaded.")
+    os.makedirs(MUSIC_DIR, exist_ok=True)
+    added, skipped = [], []
+    for f in files:
+        src = getattr(f, "name", f)
+        base = os.path.basename(src)
+        if not base.lower().endswith(MUSIC_EXTS):
+            skipped.append(base)
+            continue
+        # basename() only -- an uploaded filename is attacker-controlled in
+        # principle, and a path in it would write outside music/.
+        shutil.copyfile(src, os.path.join(MUSIC_DIR, base))
+        added.append(base)
+    app.events.add(SETTING, f"uploaded music: {', '.join(added) or 'nothing'}")
+    msg = f"Added {len(added)} track{'s' if len(added) != 1 else ''}."
+    if skipped:
+        msg += f" Skipped {len(skipped)} unsupported: {', '.join(skipped[:3])}."
+    return music_report(app), note(msg)
+
+
+def clear_music(app):
+    """Empty music/. Ad breaks fall back to playing dry."""
+    from ...config import MUSIC_DIR, music_tracks
+    tracks = music_tracks()
+    for t in tracks:
+        try:
+            os.remove(t)
+        except OSError:
+            pass
+    app.events.add(SETTING, f"removed {len(tracks)} music track(s)")
+    return music_report(app), note(
+        f"Removed {len(tracks)} track{'s' if len(tracks) != 1 else ''}. "
+        "Ad breaks will play dry until you upload more.")

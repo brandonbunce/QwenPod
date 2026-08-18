@@ -226,6 +226,26 @@ every request. Off by default, and worth understanding before turning it on:
 - A model with no reasoning mode ignores `think` entirely, so turning this on
   against `gemma4` changes nothing but the budget.
 
+### Discord commands
+
+Two real slash commands, registered when the bot connects and synced **per
+guild** — a global sync can take an hour to appear in clients, a guild sync is
+immediate. Both reply privately, so the channel does not fill with
+acknowledgements.
+
+- **`/topics text:<...>`** — queue something for the hosts to talk about. This
+  replaced the old text-prefix `/topic ` handler; there is one path now and it
+  shows up in Discord's own picker.
+- **`/sayas speaker:<...> text:<...>`** — put a line straight in a host's mouth,
+  the same entry point the web UI's **Say** button uses. Refuses with a reason
+  when the bot is not in a voice channel, rather than generating a line nobody
+  would hear.
+
+`speaker` uses **autocomplete, not a choice list**. Discord caps an option at 25
+static choices and the roster is already 27 — a static enumeration cannot
+represent it at all, and would go stale the moment a speaker is added.
+Autocomplete is re-evaluated per keystroke and filters as you type.
+
 ### The message queue
 
 Messages are **queued and answered in order**, up to *Messages held at once*
@@ -335,6 +355,57 @@ nothing else reports it. **Transcribe clip** re-runs it by hand, which is how
 you transcribe a clip loaded off the roster — the automatic pass is wired to the
 clip's *upload* and *stop recording* events rather than its change event, so
 selecting a speaker never overwrites a transcript that was already right.
+
+### Characters that evolve
+
+Each speaker has **two** system prompts:
+
+- **Base** — yours. The app never rewrites it. It is the anchor every evolution
+  starts from and what **Reset dynamic to base** returns to.
+- **Dynamic** — read-only, rewritten between segments from what that character
+  actually said. **While it has anything in it, it is what the model is told to
+  be.** Empty means the base is in use.
+
+Turn it on with *Evolve characters between segments* on **Behaviour**. After each
+topic, the speakers who actually spoke get their lines fed back through the model
+in **thinking mode**, with the base prompt included as an anchor — so drift
+accumulates but a character twenty topics in is still recognisably the one you
+wrote. Only speakers who spoke are candidates; the rest are ordered
+longest-unevolved-first so a quiet character still comes round.
+
+Saving a speaker **cannot** wipe an evolution. The dynamic box is display-only
+and is deliberately not an input to Save — a rewrite can land between the page
+rendering and you pressing the button, and reading it back from the form would
+silently undo it.
+
+Two things to watch:
+
+- **It competes with tts-server for the card.** Reasoning while speech is
+  synthesising is exactly the VRAM contention described above. Off by default.
+- **Personas tend to bloat.** Every rewrite has something new to account for and
+  no reason to drop anything. There is a hard 1200-character ceiling in the
+  prompt *and* in code, but over a long session expect to reach for Reset. This
+  is managed, not solved.
+
+### The ad break
+
+*Play an ad break* on **Behaviour** fills the gap when the topic rotates: a
+random speaker reads an invented sponsor spot about something the segment
+actually covered, over a music bed from `music/` (gitignored — upload tracks on
+the same tab, one is picked at random per break).
+
+The ad and the rewriting are one feature, not two. Rewriting takes tens of
+seconds and the gap is the only place it can happen — but a gap that long is dead
+air. So the rewrite starts first and the ad plays **over** it. The break is the
+loading screen.
+
+If the rewrites overrun *Seconds to hold the next topic*, the show carries on
+anyway and they land whenever they finish — `system_prompt()` is read fresh every
+turn, so a late result still applies, just a segment later. Dead air is worse.
+
+Everything about the break degrades quietly: no music uploaded plays it dry, and
+a failed ad — no LLM, no tts-server, an empty generation — skips the break
+entirely. None of it can stop the topic rotating.
 
 ### Building a persona from Discord history
 
@@ -687,6 +758,8 @@ the next speaker sees it.
 | `deadinternet/ui/` | Gradio interface: panels, per-tab handlers, styling |
 | `deadinternet/events.py` | in-memory event log shown on Diagnostics |
 | `deadinternet/transcribe.py` | whisper.cpp wrapper for the Run-tab microphone |
+| `deadinternet/adbreak.py` | the inter-segment break: sponsor read + character rewriting |
+| `music/` | ad-break background beds (gitignored) |
 | `setup-whisper.sh` | clone + build whisper.cpp, fetch a model |
 | `deadinternet/tests/` | smoke test: the Gradio page constructs, with every handler wired |
 | `buildapp.sh` | rebuild only `tts-server`, the one binary the app uses |

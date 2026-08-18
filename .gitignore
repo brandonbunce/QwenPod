@@ -26,6 +26,9 @@ deadinternet.json*
 # Reference clips for every cloned voice
 voices/
 
+# Ad-break background music -- uploaded audio, same class as voices/
+music/
+
 # Transcripts and prompts of live sessions
 app.log
 tts-server.log

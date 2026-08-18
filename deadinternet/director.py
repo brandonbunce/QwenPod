@@ -18,6 +18,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
+from .adbreak import AdBreak, segment_lines
 from .audio import ack_pcm, normalize_wav, truncate_wav
 from . import websearch
 from .config import (MODE_INTERACTIVE, MODE_MANUAL, MODE_PODCAST, Pin, Turn,
@@ -92,6 +93,14 @@ class Director:
         self.last_truncate = {}
         self.last_stim = ""
         self._topic_deadline = None
+        # Where in the transcript the current segment starts, so the break can
+        # analyse exactly the turns that belong to the topic that just ended.
+        # An index rather than "the transcript is the topic": that only holds
+        # while topic_clears_context is on, and it is a setting.
+        self._topic_start = 0
+        self.adbreak = AdBreak(
+            self.state, llm, self._synth, self._speak, log,
+            events=getattr(state, "events", None))
         # Shuffled bag of pin indices, refilled once exhausted. Sequential
         # order meant every restart began at the first pin again.
         self._topic_bag = []
@@ -650,6 +659,44 @@ class Director:
         if prep is None:
             return False
 
+        # ---- the break -------------------------------------------------
+        # Ordered so the ad covers the rewriting. Both need the segment that
+        # is about to be destroyed: clear_transcript() and the s.topic write
+        # are both below, so capture first.
+        outgoing_topic = s.topic
+        with self.state.lock:
+            turns = segment_lines(self.state.transcript, self._topic_start)
+        roster = self.state.active()
+        evolving = None
+        try:
+            if s.evolve_enabled:
+                # Started, not awaited: the whole point is that it runs behind
+                # the ad rather than in front of the next topic.
+                evolving = asyncio.create_task(
+                    self.adbreak.evolve(outgoing_topic, turns))
+            if s.adbreak_enabled:
+                self.status = "ad break"
+                await self.adbreak.play(outgoing_topic, turns, roster)
+            if evolving is not None:
+                self.status = "rewriting the cast"
+                n = await asyncio.wait_for(
+                    asyncio.shield(evolving), s.evolve_timeout_seconds)
+                if n:
+                    self.log(f"[evolve] {n} character(s) rewritten")
+        except asyncio.TimeoutError:
+            # Let it finish in the background. system_prompt() is read fresh
+            # every turn, so a late result still lands -- just a topic later.
+            # Holding the show open for it would be dead air, which is worse.
+            self.log(f"[evolve] still running after {s.evolve_timeout_seconds:g}s "
+                     "- carrying on, it will apply when it lands")
+        except asyncio.CancelledError:
+            if evolving is not None:
+                evolving.cancel()
+            raise
+        except Exception as e:
+            # A broken break must never stop the show rotating.
+            self.log(f"[adbreak] break failed - {e}")
+
         pin = prep.pin
         self.topic_image = prep.image
         self.topic_image_desc = prep.description
@@ -680,6 +727,10 @@ class Director:
             self.state.clear_transcript()
             self._last_speaker = None
         self._drop_pending = True
+        # Whatever the transcript is now is where this segment begins --
+        # correct whether it was just cleared or left alone.
+        with self.state.lock:
+            self._topic_start = len(self.state.transcript)
 
         if s.topic_announce:
             # Keyed off the pin, not off whether we managed to load the image:

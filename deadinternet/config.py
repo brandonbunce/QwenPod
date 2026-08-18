@@ -82,6 +82,20 @@ def gpu_busy_percent() -> Optional[int]:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VOICES_DIR = os.path.join(ROOT, "voices")
+# Background beds for the ad break. Uploaded audio is user content, same class
+# as voices/ -- gitignored, never committed.
+MUSIC_DIR = os.path.join(ROOT, "music")
+MUSIC_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".opus", ".aac")
+
+
+def music_tracks():
+    """Every usable bed, sorted. Missing directory is a normal empty state."""
+    try:
+        return sorted(
+            os.path.join(MUSIC_DIR, f) for f in os.listdir(MUSIC_DIR)
+            if f.lower().endswith(MUSIC_EXTS))
+    except OSError:
+        return []
 # Overridable so a test or a scratch script can never write over the real
 # roster: any code that constructs State() picks this up, and a script that
 # forgets to set it is the accident this exists to prevent.
@@ -154,7 +168,17 @@ class Speaker:
     # tts-server at boot. ref_text empty => speaker-embedding-only clone.
     ref_wav: str = ""
     ref_text: str = ""
+    # The persona you wrote. Never touched by the app -- it is the anchor
+    # every evolution is measured against and the thing Reset returns to.
     persona: str = ""
+    # Rewritten between topics from what this character actually said, when
+    # evolution is on. Takes precedence while it is non-empty.
+    #
+    # A *new* field rather than a rename of `persona`: State.load() does
+    # Speaker(**s) and catches only OSError/JSONDecodeError, so an unknown key
+    # in an existing roster raises TypeError straight out of State.__init__ and
+    # the app does not start. Adding is safe, renaming is not.
+    dynamic_persona: str = ""
     enabled: bool = True
     # Verbal tic: catchphrases this character blurts out. One per line (commas
     # also accepted), picked at random when the roll succeeds.
@@ -163,7 +187,13 @@ class Speaker:
     stim_chance: float = 0.0
 
     def system_prompt(self) -> str:
-        return (self.persona or DEFAULT_PERSONA).replace("{name}", self.name)
+        """What the model is actually told to be, this turn.
+
+        Read fresh on every generation, so an evolution that lands mid-topic
+        takes effect on the next line without anything being notified.
+        """
+        src = (self.dynamic_persona or "").strip() or self.persona or DEFAULT_PERSONA
+        return src.replace("{name}", self.name)
 
     def stim_list(self):
         raw = (self.stims or "").replace(",", "\n")
@@ -303,6 +333,26 @@ class Settings:
     # Let the LLM reason before answering (Ollama's `think`). Off by default:
     # it costs seconds per line, which is dead air in a live call.
     thinking: bool = False
+
+    # ---- between topics ----
+    # Rewrite characters from what they said in the segment that just ended.
+    # Off by default: it is several reasoning calls competing with tts-server
+    # for a card that is already near full.
+    evolve_enabled: bool = False
+    # Only speakers who actually spoke are candidates; this bounds how many of
+    # them get rewritten per break, oldest-evolved first so a quiet character
+    # still comes round eventually.
+    evolve_max_per_break: int = 6
+    # How long to hold the next topic waiting for the rewrites. Past this the
+    # show carries on and the results land whenever they land -- they take
+    # effect on the next turn either way, and dead air is worse.
+    evolve_timeout_seconds: float = 60.0
+
+    # A sponsor read over a music bed, between segments. Also the cover for
+    # however long the rewrites above take.
+    adbreak_enabled: bool = False
+    # How loud the bed sits under the read.
+    adbreak_music_gain: float = 0.22
     barge_in: bool = True
     # How many unanswered messages to hold. Everything past this is refused
     # rather than silently replacing something already waiting, which is what
@@ -363,7 +413,7 @@ class Settings:
     # walked round-robin too, so a subject is not exhausted before moving on.
     web_subjects: str = ""
     web_results_per_search: int = 8
-    # Topics people submitted with "/topic ..." in Discord, oldest first.
+    # Topics people submitted with /topics in Discord, oldest first.
     crowd_topics: List[str] = field(default_factory=list)
     crowd_max: int = 100
 
@@ -420,6 +470,11 @@ class State:
         # it. None is a working state -- a State built by a test or a script
         # keeps its transcript and simply logs nothing.
         self.events: Optional[EventLog] = None
+        # When each speaker was last rewritten, so the fair-ordering in
+        # adbreak.pick_for_evolution has something to sort on. In memory only:
+        # it is scheduling state, not part of the roster, and losing it on
+        # restart just means the next break picks alphabetically.
+        self.evolve_stamps = {}
         self.load()
 
     # ---- persistence -------------------------------------------------

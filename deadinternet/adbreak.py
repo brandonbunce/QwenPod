@@ -1,0 +1,178 @@
+"""The break between segments: a sponsor read, and characters being rewritten.
+
+These are one feature rather than two. Rewriting a character with a reasoning
+model takes tens of seconds, and the gap between topics is the only place that
+can happen -- but a gap that long is dead air, which is the thing this whole
+app is most careful about. So the ad plays *over* the rewriting. The break is
+the loading screen.
+
+Nothing here is allowed to stop the show. Every entry point returns rather than
+raises: no music, no LLM, no tts-server, a model that returns nonsense -- each
+of those skips a piece of the break and the next topic still starts.
+"""
+import asyncio
+import random
+import time
+
+from .audio import bed_under
+from .config import music_tracks
+from .events import RUN, VOICE
+
+
+def segment_lines(transcript, start):
+    """The turns belonging to the segment that just ended.
+
+    Sliced from a recorded index rather than assuming the transcript *is* the
+    current topic. That assumption holds only while topic_clears_context is on,
+    and it is a setting.
+    """
+    return list(transcript[start:]) if start < len(transcript) else []
+
+
+def lines_by_speaker(turns):
+    """{name: [what they said]} for bot turns only.
+
+    Real people's lines are excluded deliberately: this drives what a character
+    becomes, and a character should be shaped by their own behaviour, not by
+    someone in the channel talking at them.
+    """
+    out = {}
+    for t in turns:
+        if getattr(t, "kind", "bot") != "bot":
+            continue
+        text = (t.text or "").strip()
+        if text:
+            out.setdefault(t.speaker, []).append(text)
+    return out
+
+
+def pick_for_evolution(state, said, limit):
+    """Which speakers to rewrite this break, longest-unevolved first.
+
+    Only speakers who actually spoke are candidates -- there is nothing to
+    analyse otherwise. Ordering by how long ago each was last rewritten means a
+    quiet character still comes round instead of being permanently starved by
+    whoever talks most.
+    """
+    stamps = state.evolve_stamps
+    names = [n for n in said if state.get(n)]
+    names.sort(key=lambda n: (stamps.get(n, 0.0), n))
+    return names[:max(0, int(limit))]
+
+
+class AdBreak:
+    """Owns the interstitial. Constructed once by the director."""
+
+    def __init__(self, state, llm, synth, speak, log, events=None):
+        self.state = state
+        self.llm = llm
+        # Both come from the director: synth(text, speaker) -> wav bytes, and
+        # speak(name, text, wav) which handles truncation, loudness and
+        # playback. Passing them in keeps this module free of both tts and
+        # discord.
+        self.synth = synth
+        self.speak = speak
+        self.log = log
+        self.events = events
+        self.debug = {"last": "", "last_error": None, "breaks": 0,
+                      "evolved": 0, "last_track": "", "last_evolved": ""}
+
+    # ---- the sponsor read -------------------------------------------------
+    async def play(self, topic, turns, roster):
+        """Write, synthesise and play one ad read. -> did it play."""
+        s = self.state.settings
+        if not s.adbreak_enabled:
+            return False
+        if not roster:
+            self.debug["last_error"] = "no enabled speakers to read it"
+            return False
+
+        loop = asyncio.get_running_loop()
+        reader = random.choice(roster)
+        heard = [f"{t.speaker}: {t.text}" for t in turns][-12:]
+
+        try:
+            text = await loop.run_in_executor(
+                None, lambda: self.llm.write_ad(topic, heard, reader.name))
+        except Exception as e:
+            self.debug["last_error"] = f"could not write the ad: {e}"
+            self.log(f"[adbreak] skipped - {e}")
+            return False
+        if not text or not text.strip():
+            self.debug["last_error"] = "the model returned an empty ad"
+            return False
+        text = text.strip()
+
+        try:
+            wav = await loop.run_in_executor(
+                None, lambda: self.synth(text, reader.name))
+        except Exception as e:
+            self.debug["last_error"] = f"could not synthesise the ad: {e}"
+            self.log(f"[adbreak] skipped - {e}")
+            return False
+
+        track = random.choice(music_tracks() or [""]) or ""
+        wav, info = await loop.run_in_executor(
+            None, lambda: bed_under(wav, track, s.adbreak_music_gain))
+        if not info.get("bed"):
+            # Dry is a perfectly good ad break; say why once and carry on.
+            self.log(f"[adbreak] no bed - {info.get('reason')}")
+        self.debug["last_track"] = info.get("track", "")
+        self.debug["last"] = f"{reader.name}: {text}"[:160]
+        self.debug["last_error"] = None
+        self.debug["breaks"] += 1
+        self.log(f"[adbreak] {reader.name}: {text[:80]}")
+        if self.events:
+            self.events.add(RUN, f"ad break - {reader.name}: {text}")
+
+        await self.speak(reader.name, text, wav)
+        return True
+
+    # ---- rewriting the cast ------------------------------------------------
+    async def evolve(self, topic, turns):
+        """Rewrite the characters who spoke. -> how many changed."""
+        s = self.state.settings
+        if not s.evolve_enabled:
+            return 0
+        said = lines_by_speaker(turns)
+        if not said:
+            return 0
+
+        loop = asyncio.get_running_loop()
+        picked = pick_for_evolution(self.state, said, s.evolve_max_per_break)
+        changed = 0
+        for name in picked:
+            sp = self.state.get(name)
+            if sp is None:
+                continue
+            try:
+                new = await loop.run_in_executor(
+                    None, lambda sp=sp, name=name: self.llm.evolve_persona(
+                        name, sp.persona, sp.dynamic_persona, said[name], topic))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.log(f"[evolve] {name} failed - {e}")
+                self.debug["last_error"] = f"{name}: {e}"
+                continue
+            if not new or new == (sp.dynamic_persona or "").strip():
+                continue
+            with self.state.lock:
+                # Re-fetch under the lock: the roster can be edited from the
+                # web UI while this is running, and writing to the object we
+                # captured before the call could resurrect a deleted speaker.
+                live = self.state.get(name)
+                if live is None:
+                    continue
+                live.dynamic_persona = new
+                self.state.evolve_stamps[name] = time.time()
+            changed += 1
+            self.log(f"[evolve] {name}: {new[:80]}")
+            if self.events:
+                self.events.add(VOICE, f"{name} evolved: {new}")
+
+        if changed:
+            self.state.save()
+            self.debug["evolved"] += changed
+            self.debug["last_evolved"] = ", ".join(picked[:6])
+        return changed

@@ -252,6 +252,10 @@ class DeadInternetApp:
                                       on_topic=self.submit_crowd_topic)
         self.director = Director(self.state, self.tts, self.llm, self.runtime, log=self.log)
         self.runtime.on_text = self.director.push_user_text
+        # /sayas needs the roster to offer and somewhere to send the line.
+        self.runtime.on_say = self.director.say_now
+        self.runtime.speaker_names = lambda: [
+            sp.name for sp in self.state.active()]
 
         if not self.runtime.start():
             err = self.runtime.error or "failed to connect (check the token and intents)"
@@ -290,7 +294,7 @@ class DeadInternetApp:
         return not problems, msg
 
     def submit_crowd_topic(self, who: str, text: str):
-        """Someone typed '/topic ...' in Discord. Called from the bot thread."""
+        """Someone ran /topics in Discord. Called from the bot thread."""
         text = (text or "").strip()
         if not text:
             return

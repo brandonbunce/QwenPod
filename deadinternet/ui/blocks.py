@@ -126,6 +126,8 @@ def build(app):
                 u.s_reftext = speakers.s_reftext
                 u.s_transcribe = speakers.s_transcribe
                 u.s_persona = speakers.s_persona
+                u.s_dynamic = speakers.s_dynamic
+                u.s_reset_dynamic = speakers.s_reset_dynamic
                 u.s_stims = speakers.s_stims
                 u.s_stim_pct = speakers.s_stim_pct
                 u.s_save = speakers.s_save
@@ -185,6 +187,14 @@ def build(app):
                 u.m_dbfs = behaviour.m_dbfs
                 u.m_cap_on = behaviour.m_cap_on
                 u.m_cap_sec = behaviour.m_cap_sec
+                u.m_evolve = behaviour.m_evolve
+                u.m_evolve_max = behaviour.m_evolve_max
+                u.m_evolve_wait = behaviour.m_evolve_wait
+                u.m_adbreak = behaviour.m_adbreak
+                u.m_ad_gain = behaviour.m_ad_gain
+                u.m_music_up = behaviour.m_music_up
+                u.m_music_list = behaviour.m_music_list
+                u.m_music_clear = behaviour.m_music_clear
                 u.m_barge = behaviour.m_barge
                 u.m_ack = behaviour.m_ack
                 u.m_queue_max = behaviour.m_queue_max
@@ -244,13 +254,15 @@ def build(app):
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,
-                          [u.s_name, u.s_clip, u.s_reftext, u.s_persona, u.s_stims,
-                           u.s_stim_pct, u.sb_action])
+                          [u.s_name, u.s_clip, u.s_reftext, u.s_persona,
+                           u.s_dynamic, u.s_stims, u.s_stim_pct, u.sb_action])
         u.s_save.click(bound(t_speakers.save_speaker, app),
                        [u.s_name, u.s_clip, u.s_reftext, u.s_persona, u.s_stims,
                         u.s_stim_pct],
                        sel_out + [u.sb_action])
         u.s_delete.click(bound(t_speakers.delete_speaker, app), u.s_roster, sel_out + [u.sb_action])
+        u.s_reset_dynamic.click(bound(t_speakers.reset_dynamic, app), u.s_roster,
+                                [u.s_dynamic, u.sb_action])
         u.s_mine.click(bound(t_speakers.build_persona, app), [u.s_handle, u.s_name],
                        [u.s_name, u.s_persona, u.sb_action])
         # upload and stop_recording, deliberately not change: change also fires
@@ -338,6 +350,17 @@ def build(app):
         bind(u.m_cap_on, "speech_limit_enabled", "speech cap", bool)
         bind(u.m_cap_sec, "max_speech_seconds", "max seconds per utterance",
              float, "release")
+        bind(u.m_evolve, "evolve_enabled", "character evolution", bool)
+        bind(u.m_evolve_max, "evolve_max_per_break",
+             "characters rewritten per break", int, "release")
+        bind(u.m_evolve_wait, "evolve_timeout_seconds",
+             "how long to hold the next topic", float, "release")
+        bind(u.m_adbreak, "adbreak_enabled", "ad break", bool)
+        bind(u.m_ad_gain, "adbreak_music_gain", "music level", float, "release")
+        u.m_music_up.upload(bound(t_behaviour.upload_music, app), u.m_music_up,
+                            [u.m_music_list, u.sb_action])
+        u.m_music_clear.click(bound(t_behaviour.clear_music, app), None,
+                              [u.m_music_list, u.sb_action])
         bind(u.m_barge, "barge_in", "interrupt on message", bool)
         bind(u.m_ack, "ack_sound", "message cue", bool)
         bind(u.m_queue_max, "user_queue_max", "messages held at once",

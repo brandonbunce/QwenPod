@@ -13,17 +13,22 @@ from ..selectors import (NEW, roster_choices, selector_updates,
                          selectors_unchanged)
 
 
+# Shown in the dynamic box when a character has not evolved yet. Not a real
+# value -- reset_dynamic and save_speaker both ignore it.
+NO_DYNAMIC = ""
+
+
 def load_speaker(app, sel):
     state = app.state
-    blank = ("", None, "", "", "", 0)
+    blank = ("", None, "", "", NO_DYNAMIC, "", 0)
     if not sel or sel == NEW:
         return (*blank, "New speaker - fill in the form and press Save.")
     sp = state.get(sel)
     if not sp:
         return (*blank, "Not found.")
     clip = sp.ref_wav if sp.ref_wav and os.path.exists(sp.ref_wav) else None
-    return (sp.name, clip, sp.ref_text, sp.persona, sp.stims,
-            sp.stim_chance, f"Editing **{sp.name}**.")
+    return (sp.name, clip, sp.ref_text, sp.persona, sp.dynamic_persona,
+            sp.stims, sp.stim_chance, f"Editing **{sp.name}**.")
 
 
 def save_speaker(app, name, clip, ref_text, persona, stims, stim_pct):
@@ -47,6 +52,11 @@ def save_speaker(app, name, clip, ref_text, persona, stims, stim_pct):
 
     sp = Speaker(
         name=name, ref_wav=stored, ref_text=(ref_text or "").strip(),
+        # Read from the stored speaker, never from the form. The dynamic box
+        # is display-only and a rewrite can land between the page rendering it
+        # and you pressing Save -- taking it from the form would quietly undo
+        # an evolution that had already happened.
+        dynamic_persona=existing.dynamic_persona if existing else "",
         # Enabled lives on the Run tab's "Who's talking" list now; keep
         # whatever it is set to rather than round-tripping it through a second
         # control that could disagree.
@@ -99,6 +109,24 @@ def transcribe_clip(app, clip):
            note("Transcribed the reference clip. **Read it over** - a wrong "
                 "word here makes the clone worse and nothing else will tell "
                 "you. Then press **Save speaker**."))
+
+
+def reset_dynamic(app, sel):
+    """Throw away the evolved prompt and go back to what you wrote."""
+    state = app.state
+    if not sel or sel == NEW:
+        return gr.update(), warn("Pick a speaker first.")
+    sp = state.get(sel)
+    if not sp:
+        return gr.update(), warn("Not found.")
+    if not (sp.dynamic_persona or "").strip():
+        return gr.update(), note(f"{sp.name} has not evolved yet - nothing to reset.")
+    with state.lock:
+        sp.dynamic_persona = ""
+    state.save()
+    app.events.add(VOICE, f"reset {sp.name} to their base system prompt")
+    return (gr.update(value=NO_DYNAMIC),
+            note(f"**{sp.name}** is back to their base system prompt."))
 
 
 def delete_speaker(app, sel):

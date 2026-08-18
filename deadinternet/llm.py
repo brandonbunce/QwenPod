@@ -19,6 +19,13 @@ KEEP_ALIVE = "30m"
 # last complete sentence.
 MIN_SENTENCE_CHARS = 15
 
+# Ceiling on a rewritten persona. Repeated rewriting only ever adds -- each
+# pass has something new to account for and no reason to drop anything -- so
+# without a hard limit a character becomes a page of hedged mush after a dozen
+# topics. Enforced in the prompt and again in code, because the prompt alone
+# is a request rather than a guarantee.
+MAX_PERSONA_CHARS = 1200
+
 # How much more room a request gets when the model is allowed to think. The
 # per-line budget is sized for one or two spoken sentences; reasoning has to
 # fit *inside* the same budget, so without this the model spends all of it
@@ -241,6 +248,102 @@ class BaseLLM:
             num_predict=700,
             temperature=0.7,
         ).strip()
+
+    # ---- evolving characters --------------------------------------------------
+    def evolve_persona(self, name: str, base: str, dynamic: str, lines,
+                       topic: str) -> str:
+        """Rewrite one character from what they actually said. -> new prompt.
+
+        Sent with think=True whatever the global setting is: this is an
+        analysis rather than a line of dialogue, it happens during an ad break
+        where the latency is covered, and it is the one place reasoning
+        obviously earns its cost.
+
+        The base prompt is always in the prompt as an anchor. Without it each
+        rewrite is derived from the last and the character drifts off with
+        nothing pulling it back; with it, twenty topics of drift still
+        recognisably starts from who you wrote.
+        """
+        said = "\n".join(f"- {t}" for t in lines if t.strip())
+        if not said.strip():
+            return ""
+        current = (dynamic or "").strip() or (base or "").strip()
+        system = (
+            "You maintain the character sheet for a fictional podcast host. "
+            "You will be given who they were written to be, who they currently "
+            "are, and everything they said in the segment that just ended.\n\n"
+            "Rewrite their character sheet so it accounts for how they actually "
+            "behaved. Keep what is still true. Let genuine tendencies you can "
+            "see in their lines -- an obsession, a running joke, a stance they "
+            "keep taking, a way of arguing -- become part of who they are. "
+            "Drop traits nothing supports.\n\n"
+            "Rules:\n"
+            "- Stay recognisably the character in ORIGINAL. You are evolving "
+            "them, not replacing them.\n"
+            "- Write it as a system prompt, second person, same voice as the "
+            "originals. No preamble, no commentary, no markdown headings.\n"
+            f"- Hard limit {MAX_PERSONA_CHARS} characters. Shorter is better. "
+            "Cut something before you add something.\n"
+            "- Do not mention this segment, the topic, or that you rewrote "
+            "anything. It is a character sheet, not a report."
+        )
+        user = (
+            f"CHARACTER: {name}\n\n"
+            f"ORIGINAL (never changes, this is the anchor):\n{base or '(none)'}\n\n"
+            f"CURRENT:\n{current or '(none)'}\n\n"
+            f"SEGMENT TOPIC: {topic}\n\n"
+            f"WHAT {name} SAID:\n{said}\n\n"
+            "Their new character sheet:"
+        )
+        out = self._chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            num_predict=400,
+            temperature=0.7,
+            think=True,
+        ).strip()
+        # Models wrap a rewritten prompt in quotes or a "Here is..." lead-in
+        # often enough to be worth handling; and the length rule above is a
+        # request, so it is enforced here too.
+        out = re.sub(r"^\s*(here(?:'s| is)[^\n:]{0,60}:)\s*", "", out, flags=re.I)
+        out = out.strip().strip('"').strip()
+        if len(out) > MAX_PERSONA_CHARS:
+            cut = out.rfind(". ", 0, MAX_PERSONA_CHARS)
+            out = (out[: cut + 1] if cut > MAX_PERSONA_CHARS // 2
+                   else out[:MAX_PERSONA_CHARS]).strip()
+        return out
+
+    # ---- ad break ---------------------------------------------------------
+    def write_ad(self, topic: str, lines, speaker_name: str = "") -> str:
+        """Write the ad read for the break. -> spoken words only.
+
+        Deliberately not a thinking call. It runs while the audience is
+        listening to silence, it is two sentences of nonsense, and reasoning
+        about it would only make the break longer.
+        """
+        heard = "\n".join(f"- {t}" for t in lines if t.strip())
+        system = (
+            "You write the sponsor read for a podcast. Invent a product or "
+            "service that plausibly does not exist, named after something the "
+            "hosts actually just said, and sell it with total confidence.\n\n"
+            "Rules:\n"
+            "- Two or three sentences. It is read out loud over music.\n"
+            "- Reply with ONLY the words spoken. No 'Ad:' prefix, no stage "
+            "directions, no markdown, no emoji.\n"
+            "- Refer to something specific from the segment. That callback is "
+            "the whole joke.\n"
+            "- Play it straight. Advertising voice, not comedy voice."
+        )
+        user = (f"The segment was about: {topic}\n\n"
+                f"What was said:\n{heard or '(nothing much)'}\n\n"
+                "Write the sponsor read.")
+        return self._clean(
+            self._chat(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                num_predict=140,
+                temperature=1.0,
+                think=False,
+            ),
+            speaker_name or "narrator")
 
     # ---- interrupt router ----------------------------------------------------
     def route(self, user_name: str, user_text: str, speakers, transcript) -> str:

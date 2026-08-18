@@ -39,7 +39,7 @@ class FeedUpdate(NamedTuple):
     run_topic: Any     # Run tab: current topic, with who pinned it
     run_queue: Any     # Run tab: upcoming topics
     topic_queue: Any   # Topic tab: the same queue again
-    crowd: Any         # Topic tab: /topic submissions
+    crowd: Any         # Topic tab: /topics submissions
     dbg_voice: Any     # Diagnostics
     dbg_chat: Any
     dbg_norm: Any

@@ -92,6 +92,8 @@ class SpeakersPanel:
     s_reftext: Any
     s_transcribe: Any
     s_persona: Any
+    s_dynamic: Any
+    s_reset_dynamic: Any
     s_stims: Any
     s_stim_pct: Any
     s_save: Any
@@ -149,6 +151,14 @@ class BehaviourPanel:
     m_dbfs: Any
     m_cap_on: Any
     m_cap_sec: Any
+    m_evolve: Any
+    m_evolve_max: Any
+    m_evolve_wait: Any
+    m_adbreak: Any
+    m_ad_gain: Any
+    m_music_up: Any
+    m_music_list: Any
+    m_music_clear: Any
     m_barge: Any
     m_ack: Any
     m_queue_max: Any

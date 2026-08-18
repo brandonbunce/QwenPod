@@ -6,6 +6,8 @@ between speakers in the same conversation. This levels them to a common RMS
 with a peak ceiling so nothing clips.
 """
 import io
+import os
+import subprocess
 
 import numpy as np
 import soundfile as sf
@@ -145,3 +147,84 @@ def ack_pcm(peak: float = CUE_PEAK) -> bytes:
                            _blip(1320.0, 0.07, peak)])
     stereo = np.repeat(mono[:, None], CUE_CHANNELS, axis=1)
     return (stereo * 32767.0).astype("<i2").tobytes()
+
+
+# ---- ad break bed --------------------------------------------------------
+# Music runs before the read starts and after it ends, so the break sounds
+# like a segment rather than a line with something behind it.
+BED_LEAD_IN = 1.6
+BED_TAIL = 2.0
+BED_FADE = 1.2
+
+
+def _decode(path: str, rate: int):
+    """Any audio file -> mono float32 at `rate`, via ffmpeg.
+
+    soundfile cannot read mp3/m4a/opus, which is most of what anyone has
+    lying around to use as a bed. ffmpeg is already a hard dependency here --
+    discord.py pipes through it and transcribe.py shells out to it.
+    """
+    out = subprocess.run(
+        ["ffmpeg", "-nostdin", "-loglevel", "quiet", "-i", path,
+         "-f", "f32le", "-ac", "1", "-ar", str(rate), "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=120)
+    if out.returncode != 0 or not out.stdout:
+        raise RuntimeError(f"could not decode {os.path.basename(path)}")
+    return np.frombuffer(out.stdout, dtype="<f4").astype(np.float32)
+
+
+def bed_under(speech_wav: bytes, music_path: str, gain: float = 0.22):
+    """Lay a music bed under a spoken clip. -> (wav bytes, info).
+
+    Never raises: an ad break that cannot find its music should still be an ad
+    break. On any failure the speech comes back untouched with the reason in
+    info, and the caller plays it dry.
+    """
+    try:
+        speech, sr = sf.read(io.BytesIO(speech_wav), always_2d=True, dtype="float32")
+    except Exception as e:
+        return speech_wav, {"bed": False, "reason": f"speech decode failed: {e}"}
+    speech = speech.mean(axis=1)
+
+    if not music_path:
+        return speech_wav, {"bed": False, "reason": "no music uploaded"}
+    try:
+        music = _decode(music_path, sr)
+    except Exception as e:
+        return speech_wav, {"bed": False, "reason": str(e)}
+    if music.size == 0:
+        return speech_wav, {"bed": False, "reason": "empty track"}
+
+    lead, tail = int(BED_LEAD_IN * sr), int(BED_TAIL * sr)
+    total = lead + len(speech) + tail
+    # Loop a short track rather than letting the bed stop under the read.
+    if len(music) < total:
+        music = np.tile(music, int(np.ceil(total / len(music))))
+    # Start somewhere other than the top, so a bed reused every break does not
+    # open on the same two seconds every time.
+    start = 0 if len(music) <= total else int(np.random.default_rng().integers(
+        0, len(music) - total))
+    bed = music[start:start + total].copy() * float(gain)
+
+    fade = min(int(BED_FADE * sr), total // 2)
+    if fade > 0:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        bed[:fade] *= ramp
+        bed[-fade:] *= ramp[::-1]
+
+    mixed = bed
+    mixed[lead:lead + len(speech)] += speech
+
+    peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
+    if peak > PEAK_CEILING:
+        mixed *= PEAK_CEILING / peak
+
+    buf = io.BytesIO()
+    sf.write(buf, mixed, sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue(), {
+        "bed": True,
+        "track": os.path.basename(music_path),
+        "gain": round(float(gain), 3),
+        "duration": round(total / sr, 2),
+        "speech": round(len(speech) / sr, 2),
+    }

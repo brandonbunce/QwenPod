@@ -43,10 +43,10 @@ ANCHORS_PER_CHANNEL = 3
 MAX_SAMPLE_CHARS = 400
 MIN_SAMPLE_CHARS = 4
 
-# What people type in Discord to add a topic to the queue. A plain text
-# prefix rather than a registered slash command: unregistered commands are
-# delivered as ordinary message text, so this works with no command sync.
-TOPIC_COMMAND = "/topic "
+# Discord's hard cap on how many options an autocomplete may offer. The roster
+# is already larger than this, which is why /sayas autocompletes rather than
+# enumerating: a static choice list cannot represent it at all.
+MAX_CHOICES = 25
 
 URL_RE = re.compile(r"https?://\S+")
 CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
@@ -162,14 +162,24 @@ class DiscordRuntime:
         self.token = token
         self.log = log
         self.on_text = on_text
-        # Crowd-sourced topics: '/topic <text>' from anyone in the server.
+        # Crowd-sourced topics, now via the /topics slash command.
         self.on_topic = on_topic
+        # Set by the app once the director exists. /sayas needs both: the
+        # roster to offer, and somewhere to send the line.
+        self.on_say = None
+        self.speaker_names = None
 
         intents = discord.Intents.default()
         intents.message_content = True
         intents.voice_states = True
         intents.guilds = True
         self.client = discord.Client(intents=intents)
+        # discord.Client has no tree of its own -- that lives on commands.Bot.
+        # Attaching one here gets slash commands without migrating the whole
+        # runtime to a different base class.
+        self.tree = discord.app_commands.CommandTree(self.client)
+        self.command_stats = {"synced": 0, "topics": 0, "sayas": 0,
+                              "last": "", "last_error": None}
 
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
@@ -198,9 +208,24 @@ class DiscordRuntime:
                            "last_channel": "", "last_error": None}
         self.topic_stats = {"accepted": 0, "rejected": 0, "last": ""}
 
+        self._register_commands()
+
         @self.client.event
         async def on_ready():
             self.log(f"[discord] connected as {self.client.user}")
+            # Per-guild, not global: a global sync can take an hour to show up
+            # in clients, while a guild sync is effectively immediate. This bot
+            # lives in one server at a time, so there is nothing to gain from
+            # global registration and an hour to lose.
+            for guild in self.client.guilds:
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    self.command_stats["synced"] = len(synced)
+                    self.log(f"[discord] {len(synced)} command(s) ready in {guild.name}")
+                except Exception as e:
+                    self.command_stats["last_error"] = f"sync failed: {e}"
+                    self.log(f"[discord] command sync failed in {guild.name}: {e}")
             self.ready.set()
 
         @self.client.event
@@ -208,29 +233,6 @@ class DiscordRuntime:
             if message.author.bot:
                 return
 
-            raw = (message.content or "").strip()
-            if raw.lower().startswith(TOPIC_COMMAND):
-                # Accepted from anywhere in the server the bot is in, not just
-                # the voice channel's chat -- the whole point is letting people
-                # who are not in the call put something in the queue.
-                same_guild = bool(self.voice and message.guild
-                                  and self.voice.guild.id == message.guild.id)
-                if not same_guild:
-                    return
-                body = _readable(
-                    (getattr(message, "clean_content", None) or raw)[len(TOPIC_COMMAND):])
-                who = message.author.display_name
-                if not body:
-                    self.topic_stats["rejected"] += 1
-                    await self._react(message, "\u2753")
-                    return
-                self.topic_stats["accepted"] += 1
-                self.topic_stats["last"] = f"{who}: {body}"[:140]
-                if self.on_topic:
-                    self.on_topic(who, body)
-                self.log(f"[topic] submitted by {who}: {body[:80]}")
-                await self._react(message, "\u2705")
-                return
             # Only the built-in text chat of the voice channel we are sitting
             # in. Accepting the whole guild meant any message in any of ~30
             # channels interrupted the conversation, including ones nobody in
@@ -251,6 +253,78 @@ class DiscordRuntime:
             if self.on_text and body:
                 self.text_stats["forwarded"] += 1
                 self.on_text(message.author.display_name, body)
+
+    # ---- slash commands ---------------------------------------------------
+    def _register_commands(self):
+        """Declared once at construction; synced per-guild on ready."""
+        tree = self.tree
+
+        @tree.command(name="topics",
+                      description="Add something for the hosts to talk about")
+        @discord.app_commands.describe(text="What should they discuss?")
+        async def topics(interaction: discord.Interaction, text: str):
+            body = _readable(text or "")
+            if not body:
+                self.topic_stats["rejected"] += 1
+                await self._reply(interaction, "That came through empty - say a bit more.")
+                return
+            who = interaction.user.display_name
+            self.topic_stats["accepted"] += 1
+            self.topic_stats["last"] = f"{who}: {body}"[:140]
+            self.command_stats["topics"] += 1
+            self.command_stats["last"] = f"/topics {who}: {body}"[:140]
+            if self.on_topic:
+                self.on_topic(who, body)
+            self.log(f"[topic] submitted by {who}: {body[:80]}")
+            await self._reply(interaction, f"Queued: **{body[:180]}**")
+
+        @tree.command(name="sayas", description="Put a line in a host's mouth")
+        @discord.app_commands.describe(speaker="Who says it", text="What they say")
+        async def sayas(interaction: discord.Interaction, speaker: str, text: str):
+            body = (text or "").strip()
+            if not body:
+                await self._reply(interaction, "Nothing to say.")
+                return
+            if not (self.voice and self.voice.is_connected()):
+                # The line would generate and then go nowhere. Say so rather
+                # than accepting it into a void.
+                await self._reply(interaction,
+                                  "I am not in a voice channel - nobody would hear it.")
+                return
+            if not self.on_say:
+                await self._reply(interaction, "The director is not running.")
+                return
+            try:
+                # say_now hops to this loop and blocks on the result, so it
+                # cannot run on the loop it is waiting for.
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self.on_say, speaker, body)
+            except Exception as e:
+                self.command_stats["last_error"] = str(e)
+                await self._reply(interaction, f"Could not queue that - {e}")
+                return
+            self.command_stats["sayas"] += 1
+            self.command_stats["last"] = f"/sayas {speaker}: {body}"[:140]
+            self.log(f"[sayas] {interaction.user.display_name} -> {speaker}: {body[:60]}")
+            await self._reply(interaction, f"**{speaker}** will say it.")
+
+        @sayas.autocomplete("speaker")
+        async def speaker_options(interaction: discord.Interaction, current: str):
+            # Autocomplete, not choices: choices are static and capped at 25,
+            # and the roster is both larger than that and edited while the bot
+            # is running. This is re-evaluated on every keystroke instead.
+            names = list(self.speaker_names() if self.speaker_names else [])
+            q = (current or "").lower()
+            hits = [n for n in names if q in n.lower()] if q else names
+            return [discord.app_commands.Choice(name=n[:100], value=n)
+                    for n in hits[:MAX_CHOICES]]
+
+    async def _reply(self, interaction, message: str):
+        """Answer only the person who ran the command."""
+        try:
+            await interaction.response.send_message(message, ephemeral=True)
+        except Exception as e:
+            self.log(f"[discord] could not reply to the command: {e}")
 
     async def _react(self, message, emoji):
         """Acknowledge a submission. Needs Add Reactions; not worth failing over."""

@@ -15,6 +15,7 @@ from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
                          HeaderPanel, OutputsPanel, RunPanel, SpeakersPanel,
                          TopicPanel)
 from .feedback import tpl_vars
+from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
 from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
@@ -293,9 +294,22 @@ def build_speakers(app):
 
         with gr.Column(scale=1):
             s_persona = gr.Textbox(
-                label="System prompt / persona", lines=7,
+                label="Base system prompt", lines=6,
                 placeholder="You are Dave. You are relentlessly upbeat and "
-                            "derail every topic into cycling.")
+                            "derail every topic into cycling.",
+                info="Yours. The app never rewrites this - it is the anchor "
+                     "every evolution starts from, and what Reset returns to.")
+            # Display-only. Written by the evolution pass between topics, and
+            # deliberately not an input to Save: a rewrite can land between
+            # this box rendering and you pressing Save, and taking the value
+            # from the form would quietly undo it.
+            s_dynamic = gr.Textbox(
+                label="Dynamic system prompt", lines=6, interactive=False,
+                placeholder="(not evolved yet - the base prompt is in use)",
+                info="Rewritten between topics from what this character "
+                     "actually said. While it has anything in it, this is what "
+                     "the model is told to be.")
+            s_reset_dynamic = gr.Button("Reset dynamic to base", size="sm")
             with gr.Group():
                 gr.Markdown(
                     "**Build a persona from their Discord history.** Reads this "
@@ -334,6 +348,8 @@ def build_speakers(app):
         s_reftext=s_reftext,
         s_transcribe=s_transcribe,
         s_persona=s_persona,
+        s_dynamic=s_dynamic,
+        s_reset_dynamic=s_reset_dynamic,
         s_stims=s_stims,
         s_stim_pct=s_stim_pct,
         s_save=s_save,
@@ -442,13 +458,14 @@ def build_topic(app):
                         0, 100, value=state.settings.source_crowd_weight, step=5,
                         label="Weight", info="How often the topic comes from a submission.")
                     gr.Markdown(
-                        "Anyone in the server types **`/topic something to talk about`** "
-                        "in any channel and it lands in the queue. The bot reacts \u2705 to "
-                        "confirm. Submissions are used oldest-first and are announced with "
-                        "credit to whoever sent them.\n\n"
-                        "It is a plain message prefix, not a registered slash command, so "
-                        "Discord will show 'no command found' in the picker - sending it "
-                        "anyway works."
+                        "Anyone in the server runs **`/topics`** in any channel and it "
+                        "lands in the queue. Discord confirms it privately, so the channel "
+                        "does not fill with acknowledgements. Submissions are used "
+                        "oldest-first and are announced with credit to whoever sent them.\n\n"
+                        "A real slash command, registered when the bot connects - it "
+                        "appears in Discord's own picker with the description and the "
+                        "argument prompt. There is also **`/sayas`**, which puts a line "
+                        "straight into a chosen host's mouth."
                     )
                     crowd_pending = gr.Markdown(
                         "_(none submitted yet)_", height=200, container=True,
@@ -547,6 +564,49 @@ def build_behaviour(app):
                  "is capped in frames so nothing is rendered and then discarded; "
                  "anything still over is cut with a short fade.")
 
+    gr.Markdown(
+        "### Between segments\n"
+        "What happens in the gap when the topic rotates. These are one feature: "
+        "rewriting characters takes tens of seconds, and the ad break is what "
+        "makes that inaudible instead of dead air."
+    )
+    with gr.Row():
+        m_evolve = gr.Checkbox(
+            value=state.settings.evolve_enabled,
+            label="Evolve characters between segments",
+            info="Re-reads what each speaker actually said and rewrites their "
+                 "dynamic system prompt from it, anchored to the base prompt you "
+                 "wrote. Uses thinking mode, so it competes with tts-server for "
+                 "the card - see the VRAM note in DEADINTERNET.md.")
+        m_evolve_max = gr.Slider(
+            1, 12, value=state.settings.evolve_max_per_break, step=1,
+            label="Characters rewritten per break",
+            info="Only speakers who actually spoke are candidates, "
+                 "longest-unevolved first so a quiet character still comes round.")
+        m_evolve_wait = gr.Slider(
+            10, 300, value=state.settings.evolve_timeout_seconds, step=5,
+            label="Seconds to hold the next topic",
+            info="Past this the show carries on and the rewrites land whenever "
+                 "they finish - they apply on the next turn either way.")
+    with gr.Row():
+        m_adbreak = gr.Checkbox(
+            value=state.settings.adbreak_enabled,
+            label="Play an ad break",
+            info="A random speaker reads an invented sponsor spot about "
+                 "something the segment actually covered, over a music bed.")
+        m_ad_gain = gr.Slider(
+            0.0, 1.0, value=state.settings.adbreak_music_gain, step=0.02,
+            label="Music level under the read")
+    with gr.Group():
+        gr.Markdown("**Background music** - one track picked at random each break.")
+        with gr.Row():
+            m_music_up = gr.File(
+                label="Add tracks", file_count="multiple", scale=3,
+                file_types=["audio"])
+            with gr.Column(scale=1):
+                m_music_list = gr.Markdown(t_behaviour_music(app))
+                m_music_clear = gr.Button("Remove all", size="sm")
+
     gr.Markdown("### Connection and interruption")
     with gr.Row():
         m_barge = gr.Checkbox(
@@ -627,6 +687,14 @@ def build_behaviour(app):
         m_dbfs=m_dbfs,
         m_cap_on=m_cap_on,
         m_cap_sec=m_cap_sec,
+        m_evolve=m_evolve,
+        m_evolve_max=m_evolve_max,
+        m_evolve_wait=m_evolve_wait,
+        m_adbreak=m_adbreak,
+        m_ad_gain=m_ad_gain,
+        m_music_up=m_music_up,
+        m_music_list=m_music_list,
+        m_music_clear=m_music_clear,
         m_barge=m_barge,
         m_ack=m_ack,
         m_queue_max=m_queue_max,
