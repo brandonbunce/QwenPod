@@ -329,7 +329,7 @@ class BaseLLM:
 
     # ---- ad break ---------------------------------------------------------
     def write_ad(self, topic: str, lines, speaker_name: str = "",
-                 system: str = "") -> str:
+                 system: str = "", persona: str = "") -> str:
         """Write the ad read for the break. -> spoken words only.
 
         `system` is the editable brief from settings; blank falls back to
@@ -337,12 +337,21 @@ class BaseLLM:
         the user message either way, so a rewritten brief cannot accidentally
         drop them.
 
+        `persona` is the reader's own system prompt, so the spot is read in
+        character rather than by an anonymous voice wearing their clone. It
+        goes first and the brief goes last: the brief carries the hard format
+        rules ("only the words spoken"), and the last instruction is the one a
+        model follows when a chatty persona disagrees with it.
+
         Deliberately not a thinking call. It runs while the audience is
         listening to silence, it is two sentences of nonsense, and reasoning
         about it would only make the break longer.
         """
         heard = "\n".join(f"- {t}" for t in lines if t.strip())
-        system = (system or "").strip() or DEFAULT_AD_PROMPT
+        brief = (system or "").strip() or DEFAULT_AD_PROMPT
+        persona = (persona or "").strip()
+        system = (f"{persona}\n\nYou are reading a sponsor spot, in character.\n\n{brief}"
+                  if persona else brief)
         user = (f"The segment was about: {topic}\n\n"
                 f"What was said:\n{heard or '(nothing much)'}\n\n"
                 "Write the sponsor read.")

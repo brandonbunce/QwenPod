@@ -403,6 +403,12 @@ If the rewrites overrun *Seconds to hold the next topic*, the show carries on
 anyway and they land whenever they finish — `system_prompt()` is read fresh every
 turn, so a late result still applies, just a segment later. Dead air is worse.
 
+The spot is read **in character**: the reader's own system prompt goes in ahead
+of the brief, so an evolved host reads it as who they have become rather than as
+an anonymous voice wearing their clone. The brief goes last, because it carries
+the hard format rules and the last instruction is the one a model follows when a
+chatty persona disagrees with it.
+
 **The brief is editable.** *Ad brief* on **Behaviour** is the system prompt the
 read is written from — leave it empty and the default shows greyed out in the
 box as a placeholder, which is also what it falls back to. The segment's topic

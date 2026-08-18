@@ -92,9 +92,15 @@ class AdBreak:
         heard = [f"{t.speaker}: {t.text}" for t in turns][-12:]
 
         try:
+            # The reader's own prompt, so an evolved character reads the spot
+            # as who they have become. Read here rather than captured earlier
+            # because evolve() may be rewriting it concurrently -- attribute
+            # assignment is atomic, so this gets the old or the new one, never
+            # a half-written one.
             text = await loop.run_in_executor(
                 None, lambda: self.llm.write_ad(topic, heard, reader.name,
-                                                s.adbreak_prompt))
+                                                s.adbreak_prompt,
+                                                reader.system_prompt()))
         except Exception as e:
             self.debug["last_error"] = f"could not write the ad: {e}"
             self.log(f"[adbreak] skipped - {e}")
