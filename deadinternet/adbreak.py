@@ -93,7 +93,8 @@ class AdBreak:
 
         try:
             text = await loop.run_in_executor(
-                None, lambda: self.llm.write_ad(topic, heard, reader.name))
+                None, lambda: self.llm.write_ad(topic, heard, reader.name,
+                                                s.adbreak_prompt))
         except Exception as e:
             self.debug["last_error"] = f"could not write the ad: {e}"
             self.log(f"[adbreak] skipped - {e}")

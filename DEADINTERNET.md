@@ -403,6 +403,13 @@ If the rewrites overrun *Seconds to hold the next topic*, the show carries on
 anyway and they land whenever they finish — `system_prompt()` is read fresh every
 turn, so a late result still applies, just a segment later. Dead air is worse.
 
+**The brief is editable.** *Ad brief* on **Behaviour** is the system prompt the
+read is written from — leave it empty and the default shows greyed out in the
+box as a placeholder, which is also what it falls back to. The segment's topic
+and transcript are always appended underneath whatever you write, so a rewritten
+brief cannot leave the model with nothing to go on. It does not have to be an
+advert: ask for a jingle, a public information film, a threat.
+
 The ad read is a spoken line like any other: it goes into the Run tab's
 transcript and the event log's `speech` lines, with a separate `run` entry
 recording that it was an ad and what it played over. It is added *between* the

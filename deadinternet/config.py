@@ -353,6 +353,10 @@ class Settings:
     adbreak_enabled: bool = False
     # How loud the bed sits under the read.
     adbreak_music_gain: float = 0.22
+    # The brief the ad is written from. Blank uses llm.DEFAULT_AD_PROMPT.
+    # Stored blank rather than pre-filled so a later change to the default
+    # reaches anyone who never edited it.
+    adbreak_prompt: str = ""
     barge_in: bool = True
     # How many unanswered messages to hold. Everything past this is refused
     # rather than silently replacing something already waiting, which is what

@@ -19,7 +19,7 @@ from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
 from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
-from ..llm import PROVIDERS
+from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
 
 
 def build_diagnostics(app):
@@ -597,6 +597,14 @@ def build_behaviour(app):
         m_ad_gain = gr.Slider(
             0.0, 1.0, value=state.settings.adbreak_music_gain, step=0.02,
             label="Music level under the read")
+    m_ad_prompt = gr.Textbox(
+        value=state.settings.adbreak_prompt, lines=8,
+        label="Ad brief", placeholder=DEFAULT_AD_PROMPT,
+        info="How the sponsor read is written. Leave it empty to use the "
+             "default shown greyed out above - the segment's topic and "
+             "transcript are always appended underneath whatever you put here, "
+             "so you cannot accidentally write a brief that has nothing to go "
+             "on. Ask for a jingle, a public information film, a threat.")
     with gr.Group():
         gr.Markdown("**Background music** - one track picked at random each break.")
         with gr.Row():
@@ -692,6 +700,7 @@ def build_behaviour(app):
         m_evolve_wait=m_evolve_wait,
         m_adbreak=m_adbreak,
         m_ad_gain=m_ad_gain,
+        m_ad_prompt=m_ad_prompt,
         m_music_up=m_music_up,
         m_music_list=m_music_list,
         m_music_clear=m_music_clear,

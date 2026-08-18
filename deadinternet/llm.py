@@ -19,6 +19,21 @@ KEEP_ALIVE = "30m"
 # last complete sentence.
 MIN_SENTENCE_CHARS = 15
 
+# The ad brief, when settings.adbreak_prompt is left blank. Editable there;
+# this is what the box resets to.
+DEFAULT_AD_PROMPT = (
+    "You write the sponsor read for a podcast. Invent a product or service "
+    "that plausibly does not exist, named after something the hosts actually "
+    "just said, and sell it with total confidence.\n\n"
+    "Rules:\n"
+    "- Two or three sentences. It is read out loud over music.\n"
+    "- Reply with ONLY the words spoken. No 'Ad:' prefix, no stage directions, "
+    "no markdown, no emoji.\n"
+    "- Refer to something specific from the segment. That callback is the whole "
+    "joke.\n"
+    "- Play it straight. Advertising voice, not comedy voice."
+)
+
 # Ceiling on a rewritten persona. Repeated rewriting only ever adds -- each
 # pass has something new to account for and no reason to drop anything -- so
 # without a hard limit a character becomes a page of hedged mush after a dozen
@@ -313,26 +328,21 @@ class BaseLLM:
         return out
 
     # ---- ad break ---------------------------------------------------------
-    def write_ad(self, topic: str, lines, speaker_name: str = "") -> str:
+    def write_ad(self, topic: str, lines, speaker_name: str = "",
+                 system: str = "") -> str:
         """Write the ad read for the break. -> spoken words only.
+
+        `system` is the editable brief from settings; blank falls back to
+        DEFAULT_AD_PROMPT. The segment's topic and transcript are appended as
+        the user message either way, so a rewritten brief cannot accidentally
+        drop them.
 
         Deliberately not a thinking call. It runs while the audience is
         listening to silence, it is two sentences of nonsense, and reasoning
         about it would only make the break longer.
         """
         heard = "\n".join(f"- {t}" for t in lines if t.strip())
-        system = (
-            "You write the sponsor read for a podcast. Invent a product or "
-            "service that plausibly does not exist, named after something the "
-            "hosts actually just said, and sell it with total confidence.\n\n"
-            "Rules:\n"
-            "- Two or three sentences. It is read out loud over music.\n"
-            "- Reply with ONLY the words spoken. No 'Ad:' prefix, no stage "
-            "directions, no markdown, no emoji.\n"
-            "- Refer to something specific from the segment. That callback is "
-            "the whole joke.\n"
-            "- Play it straight. Advertising voice, not comedy voice."
-        )
+        system = (system or "").strip() or DEFAULT_AD_PROMPT
         user = (f"The segment was about: {topic}\n\n"
                 f"What was said:\n{heard or '(nothing much)'}\n\n"
                 "Write the sponsor read.")

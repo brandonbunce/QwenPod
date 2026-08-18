@@ -156,6 +156,7 @@ class BehaviourPanel:
     m_evolve_wait: Any
     m_adbreak: Any
     m_ad_gain: Any
+    m_ad_prompt: Any
     m_music_up: Any
     m_music_list: Any
     m_music_clear: Any
