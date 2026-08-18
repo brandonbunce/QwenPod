@@ -21,6 +21,7 @@ import time
 from typing import List, Optional
 
 import discord
+import numpy as np
 
 from .config import MAX_IMAGE_BYTES, Pin
 
@@ -50,6 +51,66 @@ TOPIC_COMMAND = "/topic "
 URL_RE = re.compile(r"https?://\S+")
 CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
 MENTION_RE = re.compile(r"<@[!&]?\d+>")
+
+
+class _Mixer(discord.AudioSource):
+    """Speech with short cues added on top of it.
+
+    A voice client plays exactly one source, so the obvious way to make an
+    acknowledgement noise -- play it -- would stop whoever is mid-sentence.
+    That is the opposite of what an acknowledgement is for: it exists so that
+    someone typing while the bot talks gets an answer to "did that land?"
+    without the bot having to shut up to say so.
+
+    So the cue is summed into the speech frames on their way out. read() is
+    called on discord.py's player thread and cue() from the event loop, hence
+    the lock. Wrapping a base of None turns this into a plain cue player, for
+    when nothing is talking.
+    """
+
+    # 20ms of 48kHz stereo 16-bit, which is one Opus frame.
+    FRAME = 3840
+    # Roughly two seconds of cues. A backlog longer than that is a stream of
+    # notifications nobody can tell apart anyway.
+    MAX_CUE = FRAME * 100
+
+    def __init__(self, base: Optional[discord.AudioSource]):
+        self._base = base
+        self._lock = threading.Lock()
+        self._cue = bytearray()
+
+    def cue(self, pcm: bytes) -> bool:
+        with self._lock:
+            if len(self._cue) + len(pcm) > self.MAX_CUE:
+                return False
+            self._cue.extend(pcm)
+            return True
+
+    def is_opus(self) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        data = self._base.read() if self._base else b""
+        with self._lock:
+            if not self._cue:
+                return data
+            take = bytes(self._cue[:self.FRAME])
+            del self._cue[:self.FRAME]
+        if len(data) < self.FRAME:
+            # The speech ended with a cue still going. Padding to a full frame
+            # keeps the player running long enough to finish it; returning
+            # short here would cut the cue off mid-note. Once both are empty
+            # read() returns b"" and playback ends normally.
+            data = data + b"\x00" * (self.FRAME - len(data))
+        if len(take) < self.FRAME:
+            take = take + b"\x00" * (self.FRAME - len(take))
+        a = np.frombuffer(data, dtype="<i2").astype(np.int32)
+        b = np.frombuffer(take, dtype="<i2").astype(np.int32)
+        return np.clip(a + b, -32768, 32767).astype("<i2").tobytes()
+
+    def cleanup(self):
+        if self._base:
+            self._base.cleanup()
 
 
 class _LogBridge(logging.Handler):
@@ -116,6 +177,8 @@ class DiscordRuntime:
         self.ready = threading.Event()
         self.error: Optional[str] = None
         self._playback_done: Optional[asyncio.Event] = None
+        # The live mixer, while something is playing. Cues are added to it.
+        self._mixer: Optional[_Mixer] = None
         # The channel the UI asked for, kept so the watchdog can get back into
         # it after Discord terminates the call.
         self.target_channel_id: Optional[int] = None
@@ -597,13 +660,19 @@ class DiscordRuntime:
         loop = asyncio.get_running_loop()
 
         source = discord.FFmpegPCMAudio(io.BytesIO(wav), pipe=True, options="-loglevel quiet")
+        # Everything goes out through the mixer so a cue can be added to the
+        # stream mid-sentence without stopping it.
+        mixer = _Mixer(source)
+        self._mixer = mixer
 
         def after(err):
             if err:
                 self.log(f"[discord] playback: {err}")
+            if self._mixer is mixer:
+                self._mixer = None
             loop.call_soon_threadsafe(done.set)
 
-        self.voice.play(source, after=after)
+        self.voice.play(mixer, after=after)
         if not timeout:
             await done.wait()
             return
@@ -616,6 +685,36 @@ class DiscordRuntime:
                 self.voice.stop()
             except Exception:
                 pass
+
+    def play_cue(self, pcm: bytes) -> bool:
+        """Sound a short cue without interrupting speech. -> was it played.
+
+        Called from the director's thread. If something is talking the cue is
+        summed into the frames already on their way out; if not, it is played
+        on its own.
+        """
+        if not (self.voice and self.voice.is_connected() and self.loop):
+            return False
+        mixer = self._mixer
+        if mixer is not None and self.voice.is_playing():
+            return mixer.cue(pcm)
+        self.loop.call_soon_threadsafe(self._cue_alone, pcm)
+        return True
+
+    def _cue_alone(self, pcm: bytes):
+        """Play a cue with nothing underneath it. On the event loop."""
+        if not (self.voice and self.voice.is_connected()) or self.voice.is_playing():
+            # Speech started in the gap since play_cue looked. It gets the
+            # channel; a missed notification beats a truncated sentence.
+            return
+        lone = _Mixer(None)
+        lone.cue(pcm)
+        try:
+            # No after= that touches _playback_done: this playback is not a
+            # turn, and releasing play_wav()'s wait would end a turn early.
+            self.voice.play(lone)
+        except Exception as e:
+            self.log(f"[voice] could not play the cue: {e}")
 
     def interrupt(self):
         """Cut off the current utterance -- used when a real user types.

@@ -205,6 +205,32 @@ wherever you have scrolled to.
 Typing is the only input path — there is no speech recognition. See
 *No speech input* under Known limitations.
 
+### The message queue
+
+Messages are **queued and answered in order**, up to *Messages held at once*
+(default 8) on the **Behaviour** tab. This used to be a single slot: a second
+message arriving before the turn loop came back round overwrote the first, and
+nothing said so — which is most of a sentence, every sentence, so a room typing
+at any speed lost most of what it said.
+
+Every accepted message sounds a short two-note **cue**, mixed *over* whoever is
+talking rather than interrupting them. That is the receipt: it tells someone
+typing mid-line that they landed without the bot having to stop to say so.
+**Silence means the message was refused**, not that it was missed — the only
+thing that refuses is a full queue, and *Diagnostics → Chat input* counts them.
+
+Interruption stays useful without becoming a stutter: *Interrupt the current
+line when someone types* fires only for a message that arrives with **nothing
+already waiting**. A rapid handful queues behind that one, because cutting off
+every sentence in a row means nothing ever gets finished — and the cue has
+already told them the later messages landed. The cue and the queue depth are
+both switchable on **Behaviour**.
+
+A voice client plays exactly one source, so mixing is what makes the cue
+possible at all: `_Mixer` in `deadinternet/bot.py` sums the cue into the speech
+frames on their way out, and pads past the end of a clip so a cue that outlasts
+it is not cut off mid-note.
+
 ### Speaking instead of typing
 
 Under **Say a line as** there is a microphone: pick an input, press Record, and

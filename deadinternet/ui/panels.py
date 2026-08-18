@@ -544,7 +544,21 @@ def build_behaviour(app):
     with gr.Row():
         m_barge = gr.Checkbox(
             value=state.settings.barge_in,
-            label="Interrupt the current line when someone types")
+            label="Interrupt the current line when someone types",
+            info="Only for a message that arrives with nothing already "
+                 "waiting. A rapid handful queues behind it instead of cutting "
+                 "off every sentence in a row.")
+        m_ack = gr.Checkbox(
+            value=state.settings.ack_sound,
+            label="Play a cue when a message is taken",
+            info="A short two-note blip, mixed over whoever is talking rather "
+                 "than interrupting them. Silence after typing means the "
+                 "message was refused, not that it was missed.")
+        m_queue_max = gr.Slider(
+            1, 30, value=state.settings.user_queue_max, step=1,
+            label="Messages held at once",
+            info="Everything held is answered, oldest first. Past this, new "
+                 "messages are refused and no cue plays.")
         m_rejoin = gr.Checkbox(
             value=state.settings.auto_rejoin, label="Rejoin automatically",
             info="Discord ends the call when the last person leaves, and "
@@ -606,6 +620,8 @@ def build_behaviour(app):
         m_cap_on=m_cap_on,
         m_cap_sec=m_cap_sec,
         m_barge=m_barge,
+        m_ack=m_ack,
+        m_queue_max=m_queue_max,
         m_rejoin=m_rejoin,
         m_pause_empty=m_pause_empty,
     )

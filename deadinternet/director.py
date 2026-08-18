@@ -18,7 +18,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
-from .audio import normalize_wav, truncate_wav
+from .audio import ack_pcm, normalize_wav, truncate_wav
 from . import websearch
 from .config import (MODE_INTERACTIVE, MODE_MANUAL, MODE_PODCAST, Pin, Turn,
                      render_template)
@@ -44,6 +44,10 @@ class PreparedTopic:
 # The 12 Hz codec emits 12.5 audio frames per second (24000 / 1920-sample hop),
 # which converts a seconds limit into the server's max_new_tokens frame count.
 FRAMES_PER_SECOND = 12.5
+
+# The receipt for a message being taken into the queue. Built once at
+# import: it is 28 kB of PCM and it never changes.
+ACK_PCM = ack_pcm()
 
 # A hand-typed topic has no author to credit, so the pinned-by templates would
 # render "new topic by : ...". These are used instead; not user-editable
@@ -132,7 +136,8 @@ class Director:
         self._empty_since = 0.0
         # Text chat is the only way in for a real person, so the debug panel
         # tracks it instead of a receive pipeline.
-        self.text_debug = {"queued": 0, "answered": 0, "last": "",
+        self.text_debug = {"queued": 0, "answered": 0, "dropped": 0, "depth": 0,
+                           "last": "",
                            "last_drop": None, "last_router": ""}
 
     # ---- speaker selection ---------------------------------------------
@@ -261,23 +266,56 @@ class Director:
     # ---- user input ------------------------------------------------------
     def push_user_text(self, user: str, text: str):
         """Called from the Discord thread for text-channel messages. This is
-        the only way a real person gets into the conversation."""
+        the only way a real person gets into the conversation.
+
+        Everything accepted is answered, in the order it was said. The cue is
+        the receipt: it sounds the moment a message is taken, over the top of
+        whoever is talking, so someone typing during a line knows it landed
+        without the bot having to stop to tell them.
+        """
         text = (text or "").strip()
-        if not text or self.state.settings.mode != MODE_INTERACTIVE:
-            self.text_debug["last_drop"] = (
-                f"mode is {self.state.settings.mode}, not interactive")
+        if not text:
             return
+        s = self.state.settings
+        if s.mode != MODE_INTERACTIVE:
+            self.text_debug["last_drop"] = (
+                f"mode is {s.mode}, not interactive")
+            return
+
         with self.state.lock:
-            self.state.pending_user = Turn(speaker=user, text=text, kind="user")
+            q = self.state.pending_users
+            if len(q) >= max(1, s.user_queue_max):
+                # Refused, not silently replaced. The cue stays quiet, so
+                # silence after a message means it was not taken -- which is
+                # the only honest thing an acknowledgement can do here.
+                self.text_debug["dropped"] += 1
+                self.text_debug["last_drop"] = (
+                    f"{len(q)} already waiting - queue is full")
+                self.log(f"[text] queue full ({len(q)}), refused {user}: {text[:60]}")
+                return
+            first = not q
+            q.append(Turn(speaker=user, text=text, kind="user"))
+            depth = len(q)
+
         self.text_debug["queued"] += 1
+        self.text_debug["depth"] = depth
         self.text_debug["last"] = f"{user}: {text}"[:140]
         self.text_debug["last_drop"] = None
-        if self.state.settings.barge_in:
+
+        if s.ack_sound:
+            self.runtime.play_cue(ACK_PCM)
+
+        if s.barge_in and first:
             # Cut whoever is mid-sentence and bin the pre-generated line; it
-            # was written for a conversation that has just changed.
+            # was written for a conversation that has just changed. Only for
+            # the message that finds the queue empty: interrupting again for
+            # each one of a rapid handful would stop the bot ever finishing a
+            # sentence, and the cue has already said the later ones landed.
             self._drop_pending = True
             self.status = f"{user} typed - answering"
             self.runtime.interrupt()
+        elif not first:
+            self.status = f"{user} queued - {depth} waiting"
 
     # ---- topic rotation ----------------------------------------------------
     def _next_pin(self, pins):
@@ -835,7 +873,9 @@ class Director:
 
     def _take_pending_user(self) -> Optional[Turn]:
         with self.state.lock:
-            turn, self.state.pending_user = self.state.pending_user, None
+            q = self.state.pending_users
+            turn = q.popleft() if q else None
+            self.text_debug["depth"] = len(q)
         return turn
 
     # ---- manual mode ------------------------------------------------------
@@ -1030,7 +1070,7 @@ class Director:
 
     def _peek_user(self) -> bool:
         with self.state.lock:
-            return self.state.pending_user is not None
+            return bool(self.state.pending_users)
 
     # ---- lifecycle ---------------------------------------------------------
     def start(self):

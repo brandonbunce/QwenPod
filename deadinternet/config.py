@@ -11,8 +11,9 @@ import os
 import re
 import subprocess
 import threading
+from collections import deque
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Tuple
+from typing import Deque, List, Optional, Tuple
 
 from .events import SPEECH as EV_SPEECH, EventLog
 
@@ -300,6 +301,11 @@ class Settings:
     # letting the current line finish first. Text is the only input path --
     # there is no speech recognition (see DEADINTERNET.md).
     barge_in: bool = True
+    # How many unanswered messages to hold. Everything past this is refused
+    # rather than silently replacing something already waiting, which is what
+    # the single pending slot this replaced used to do.
+    user_queue_max: int = 8
+    ack_sound: bool = True
     # Discord ends the call when the last person leaves the voice channel and
     # discord.py does not reconnect, so a watchdog gets back in once somebody
     # returns. Turn off only if you want to control joining by hand.
@@ -400,9 +406,12 @@ class State:
         self.speakers: List[Speaker] = []
         self.settings = Settings()
         self.transcript: List[Turn] = []
-        # Set when a real user speaks in interactive mode; the director
-        # drains this instead of continuing the podcast.
-        self.pending_user: Optional[Turn] = None
+        # What real people have said in interactive mode and not been answered
+        # for yet, oldest first; the director drains this before continuing the
+        # podcast. A queue rather than the single slot this replaced, which
+        # dropped a message whenever a second arrived before the turn loop came
+        # back round -- which is most of a sentence, every sentence.
+        self.pending_users: Deque[Turn] = deque()
         # The Diagnostics event log. Owned by the app, attached here so
         # add_turn can record spoken lines without every caller knowing about
         # it. None is a working state -- a State built by a test or a script

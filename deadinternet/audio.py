@@ -107,3 +107,41 @@ def normalize_wav(wav: bytes, target_dbfs: float = DEFAULT_TARGET_DBFS):
     buf = io.BytesIO()
     sf.write(buf, out, sr, format="WAV", subtype="PCM_16")
     return buf.getvalue(), info
+
+
+# ---- acknowledgement cue -------------------------------------------------
+# Discord's wire format. The cue is mixed straight into the outgoing stream by
+# bot.py, so generating it at exactly this rate and layout means no resampling
+# and no ffmpeg on the path.
+CUE_RATE = 48000
+CUE_CHANNELS = 2
+# Well under speech level. This plays *underneath* someone talking, so it has
+# to read as a notification rather than as a third participant.
+CUE_PEAK = 0.16
+
+
+def _blip(freq: float, seconds: float, peak: float) -> np.ndarray:
+    n = int(CUE_RATE * seconds)
+    t = np.arange(n, dtype=np.float32) / CUE_RATE
+    wave = np.sin(2.0 * np.pi * freq * t, dtype=np.float32) * peak
+    # Raised-cosine edges. A square start on a pure tone is an audible click,
+    # and a click is exactly what a quiet notification must not have.
+    edge = max(1, int(CUE_RATE * 0.008))
+    ramp = (1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float32))) * 0.5
+    wave[:edge] *= ramp
+    wave[-edge:] *= ramp[::-1]
+    return wave
+
+
+def ack_pcm(peak: float = CUE_PEAK) -> bytes:
+    """A short two-note rise: 'got it'.
+
+    Synthesised rather than shipped as a file so there is no asset to lose and
+    no sample-rate to convert. Returns interleaved stereo 16-bit PCM at
+    CUE_RATE, which is what discord.py's mixer wants.
+    """
+    gap = np.zeros(int(CUE_RATE * 0.02), dtype=np.float32)
+    mono = np.concatenate([_blip(880.0, 0.06, peak), gap,
+                           _blip(1320.0, 0.07, peak)])
+    stereo = np.repeat(mono[:, None], CUE_CHANNELS, axis=1)
+    return (stereo * 32767.0).astype("<i2").tobytes()

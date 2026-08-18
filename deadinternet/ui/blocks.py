@@ -185,6 +185,8 @@ def build(app):
                 u.m_cap_on = behaviour.m_cap_on
                 u.m_cap_sec = behaviour.m_cap_sec
                 u.m_barge = behaviour.m_barge
+                u.m_ack = behaviour.m_ack
+                u.m_queue_max = behaviour.m_queue_max
                 u.m_rejoin = behaviour.m_rejoin
                 u.m_pause_empty = behaviour.m_pause_empty
             with gr.Tab("Testing"):
@@ -333,6 +335,9 @@ def build(app):
         bind(u.m_cap_sec, "max_speech_seconds", "max seconds per utterance",
              float, "release")
         bind(u.m_barge, "barge_in", "interrupt on message", bool)
+        bind(u.m_ack, "ack_sound", "message cue", bool)
+        bind(u.m_queue_max, "user_queue_max", "messages held at once",
+             int, "release")
         bind(u.m_rejoin, "auto_rejoin", "auto-rejoin", bool,
              after=lambda: app.sync_voice_settings())
         bind(u.m_pause_empty, "pause_when_empty", "pause while empty", bool)

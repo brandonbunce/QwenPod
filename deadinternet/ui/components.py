@@ -149,5 +149,7 @@ class BehaviourPanel:
     m_cap_on: Any
     m_cap_sec: Any
     m_barge: Any
+    m_ack: Any
+    m_queue_max: Any
     m_rejoin: Any
     m_pause_empty: Any
