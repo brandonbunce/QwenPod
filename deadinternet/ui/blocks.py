@@ -23,6 +23,7 @@ from .feed import poll as _poll
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
 from .mic import MIC_JS
+from .rosterscroll import ROSTER_SCROLL_JS
 from .panels import (build_behaviour, build_diagnostics, build_generate,
                      build_header, build_outputs, build_run, build_speakers,
                      build_topic)
@@ -408,5 +409,6 @@ def build(app):
         demo.load(stream_voice_boot, None, sel_out)
         demo.load(None, None, None, js=AUTOSCROLL_JS)
         demo.load(None, None, None, js=MIC_JS)
+        demo.load(None, None, None, js=ROSTER_SCROLL_JS)
 
     return demo

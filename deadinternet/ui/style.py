@@ -93,12 +93,47 @@ APP_CSS = """
   border-radius: 3px;
 }
 
+/* ---- scrollbars ------------------------------------------------------- */
+/* Scoped to body and below, deliberately not :root. Gradio defines its theme
+   variables on the container, so on <html> they still resolve to the LIGHT
+   fallbacks -- --border-color-primary is #e4e4e7 there and #3f3f46 one element
+   down. A scrollbar styled at :root is pale grey on a dark page.
+ *
+ * Both syntaxes on purpose: Chrome 121+ honours scrollbar-width/-color and
+ * ignores the ::-webkit- rules when they are set, older builds do the reverse.
+ *
+ * The viewport scrollbar is covered without naming <html>: the spec applies
+ * BODY's scrollbar-width/-color to the viewport while HTML's is auto, and
+ * leaving <html> alone is exactly what keeps it auto. */
+body, body * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color-primary) transparent;
+}
+body::-webkit-scrollbar,
+body ::-webkit-scrollbar { width: 10px; height: 10px; }
+body::-webkit-scrollbar-track,
+body ::-webkit-scrollbar-track { background: transparent; }
+body::-webkit-scrollbar-thumb,
+body ::-webkit-scrollbar-thumb {
+  background: var(--border-color-primary);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+body::-webkit-scrollbar-thumb:hover,
+body ::-webkit-scrollbar-thumb:hover {
+  background: var(--body-text-color-subdued);
+  background-clip: padding-box;
+}
+body::-webkit-scrollbar-corner,
+body ::-webkit-scrollbar-corner { background: transparent; }
+
 /* ---- roster strip ---------------------------------------------------- */
 /* Radio options laid out as a horizontal scrolling strip. Gradio stacks them
    vertically by default, which turned a long roster into the tallest thing on
    the page. */
 .roster-bar .wrap,
-.roster-bar fieldset > div {
+.roster-bar > div {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: nowrap !important;

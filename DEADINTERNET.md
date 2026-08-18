@@ -184,6 +184,18 @@ exactly when you are looking at some other tab. The action line below it does
 It closes the header block, so it carries the bottom rule, and a long message
 scrolls inside two lines rather than pushing the tabs down the page.
 
+Scrollbars follow the theme — thin, thumb on gradio's own border colour. They
+are styled from `body` down and **never on `:root`**: gradio defines its theme
+variables on the container, so at `<html>` they still resolve to the light
+fallbacks and a scrollbar styled there comes out pale grey on a dark page.
+Leaving `<html>` alone also lets the spec propagate `body`'s scrollbar styling
+to the viewport, so the page scrollbar matches too.
+
+The roster strip on **Speakers** scrolls sideways with a plain mouse wheel — a
+vertical wheel has nowhere else to go there, and the arrows alone made a long
+roster tedious. At either end the event is released so the page scrolls
+normally, rather than the strip becoming something you have to steer around.
+
 **Styling either of them: gradio puts `elem_classes` on both the outer `.block`
 and the inner `.prose` div.** A bare `.action-line { padding; border }` is
 applied twice — double padding, and a second bottom rule drawn above the real
@@ -816,6 +828,7 @@ the next speaker sees it.
 | `deadinternet/events.py` | in-memory event log shown on Diagnostics |
 | `deadinternet/transcribe.py` | whisper.cpp wrapper for the Run-tab microphone |
 | `deadinternet/adbreak.py` | the inter-segment break: sponsor read + character rewriting |
+| `deadinternet/ui/rosterscroll.py` | wheel-to-horizontal for the Speakers roster strip |
 | `music/` | ad-break background beds (gitignored) |
 | `setup-whisper.sh` | clone + build whisper.cpp, fetch a model |
 | `deadinternet/tests/` | smoke test: the Gradio page constructs, with every handler wired |
