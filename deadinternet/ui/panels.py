@@ -162,19 +162,19 @@ def build_header(app):
 
 
 def build_run(app, init_names):
-    """Two columns: what the conversation *is* on the left, what it is doing
-    and what you can do to it on the right.
+    """Two columns: driving the show on the left, watching it on the right.
 
-    The transport controls span both, because Start/Stop apply to the whole
-    thing rather than to either column.
+    Left runs top-down in the order you actually use it: pick a mode, start it,
+    see what is coming, see what is on now, then the four ways to change it.
+    Right is the things you read -- who is in, what they said -- with the one
+    control that interrupts them at the bottom.
+
+    Start/Stop used to span both columns above everything. They belong with
+    Mode: choosing how it runs and making it run are one decision, and putting
+    them in the left column stops the top of the tab being a row of four
+    buttons that do unrelated things.
     """
     state = app.state
-    with gr.Row():
-        r_start = gr.Button("Start", variant="primary", scale=1)
-        r_stop = gr.Button("Stop", scale=1)
-        r_clear = gr.Button("Clear LLM context", scale=1)
-        r_rotate = gr.Button("Switch topic now", scale=1)
-
     with gr.Row(equal_height=False):
         with gr.Column(scale=1):
             m_mode = gr.Radio(
@@ -183,10 +183,38 @@ def build_run(app, init_names):
                      "interactive - someone typing in the server interrupts "
                      "and a router picks who answers. "
                      "manual - nothing automatic; you pick a speaker and a line.")
+            with gr.Row():
+                r_start = gr.Button("Start", variant="primary", scale=1)
+                r_stop = gr.Button("Stop", scale=1)
+
+            gr.Markdown("**Up next**")
+            run_queue = gr.Markdown(
+                "_(no queue yet)_", height=150, container=True,
+                elem_classes=["queue-box"])
+
             gr.Markdown("**Current topic**")
             run_topic = gr.Markdown(
                 f"{state.settings.topic}", height=110, container=True,
                 elem_classes=["topic-box"])
+
+            # A second way into switch_to_typed/queue_typed, so a topic can be
+            # injected without leaving the tab you are watching. Its own box
+            # rather than a mirror of the one on Inputs: two components bound
+            # to one setting would fight each other on every feed tick.
+            run_inject = gr.Textbox(
+                label="Insert a topic", lines=2,
+                placeholder="something for them to talk about")
+            # Labelled by what they act on, not by when. "Switch to this now"
+            # next to "Switch topic now" was two buttons a word apart that did
+            # different things -- one uses the box above, the other takes the
+            # next thing off the queue.
+            run_inject_now = gr.Button("Switch to typed topic now",
+                                       variant="primary")
+            r_rotate = gr.Button("Switch to queued topic now")
+            run_inject_queue = gr.Button("Queue typed topic")
+            r_clear = gr.Button("Clear LLM context")
+
+        with gr.Column(scale=1):
             # Enabling/disabling a speaker is the most common mid-conversation
             # change, so it lives here rather than one per speaker on another
             # tab.
@@ -196,26 +224,11 @@ def build_run(app, init_names):
                 label="Who's talking",
                 info="Tick to let someone join the conversation. Saves immediately.")
 
-        with gr.Column(scale=1):
-            gr.Markdown("**Up next**")
-            run_queue = gr.Markdown(
-                "_(no queue yet)_", height=150, container=True,
-                elem_classes=["queue-box"])
-            # A second way into switch_to_typed/queue_typed, so a topic can be
-            # injected without leaving the tab you are watching. Its own box
-            # rather than a mirror of the one on Inputs: two components bound
-            # to one setting would fight each other on every feed tick.
-            run_inject = gr.Textbox(
-                label="Inject a topic", lines=2,
-                placeholder="something for them to talk about")
-            with gr.Row():
-                run_inject_now = gr.Button("Switch to this now", scale=1,
-                                           variant="primary")
-                run_inject_queue = gr.Button("Queue it next", scale=1)
             gr.Markdown("**Transcript**")
             r_transcript = gr.Markdown(
-                "_(nothing yet)_", height=300, container=True,
+                "_(nothing yet)_", height=380, container=True,
                 elem_classes=["transcript-box"])
+
             gr.Markdown("**Say a line as** (works in any mode, jumps the queue)")
             with gr.Row():
                 man_speaker = gr.Dropdown(choices=init_names, label="Speaker", scale=1)

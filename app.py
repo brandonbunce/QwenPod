@@ -16,7 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
-from deadinternet.config import (ENV_PATH, PERSONA_POOL_TARGET, PERSONA_SAMPLES,
+from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
+                                 PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
                                  VRAM_WARN_FRACTION, State, gpu_busy_percent,
                                  load_env, vram_info)
@@ -60,6 +61,9 @@ class DeadInternetApp:
         self._channels = []
         self._text_channels = []
         self._log_tail = []
+        # log() is called from the director thread, the discord thread and
+        # gradio's workers.
+        self._log_lock = threading.Lock()
         self._tts_proc = None
         # Serialises launching the server and re-uploading the roster, so the
         # background boot and a Start press can never launch two servers or
@@ -202,9 +206,29 @@ class DeadInternetApp:
 
     # ---- logging ---------------------------------------------------------
     def log(self, msg):
-        print(msg, flush=True)
-        self._log_tail.append(str(msg))
+        """Everything the app has to say: stdout, app.log, and the UI tail.
+
+        The file is the point. Before this, log() only printed -- so a run
+        started in a terminal instead of with `>> app.log` left no record, and
+        the one time that mattered (a show that degenerated overnight) there
+        was nothing to read back.
+        """
+        line = str(msg)
+        print(line, flush=True)
+        self._log_tail.append(line)
         del self._log_tail[:-40]
+        stamped = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n"
+        # Never let logging be the thing that breaks the app: a full disk or a
+        # read-only checkout should cost the record, not the show.
+        try:
+            with self._log_lock:
+                if (os.path.exists(LOG_PATH)
+                        and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES):
+                    os.replace(LOG_PATH, LOG_PATH + ".1")
+                with open(LOG_PATH, "a") as f:
+                    f.write(stamped)
+        except OSError:
+            pass
 
     # ---- banner ----------------------------------------------------------
     def banner(self):

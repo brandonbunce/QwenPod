@@ -85,6 +85,13 @@ VOICES_DIR = os.path.join(ROOT, "voices")
 # Background beds for the ad break. Uploaded audio is user content, same class
 # as voices/ -- gitignored, never committed.
 MUSIC_DIR = os.path.join(ROOT, "music")
+# Where the app writes its own log. It used to only print to stdout, so a run
+# started from a terminal left no record at all -- which is exactly the run you
+# need afterwards. Gitignored: it carries transcripts and personas.
+LOG_PATH = os.path.join(ROOT, "app.log")
+# Roll over past this. An overnight run is well under a megabyte, but nothing
+# was trimming it and a log that eats the disk is its own outage.
+LOG_MAX_BYTES = 8 * 1024 * 1024
 MUSIC_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".opus", ".aac")
 
 

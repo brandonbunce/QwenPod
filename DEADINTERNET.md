@@ -81,6 +81,11 @@ To run it detached instead of holding a terminal:
 cd ~/Documents/qwentts.cpp && nohup ./.venv-app/bin/python ./app.py >> app.log 2>&1 & disown
 ```
 
+**The app writes `app.log` itself**, timestamped, rolling over at 8 MB. The
+redirection above is belt and braces for anything printed before the app is up —
+it is no longer what creates the log. Running in a terminal used to leave no
+record at all, which is exactly the run you want to read afterwards.
+
 Startup skips the launch if port 8080 already answers, so an app restart never
 stacks a second server on the card — and never disturbs a healthy one. Pass
 `--no-tts-autostart` to suppress the launch entirely (it still registers
@@ -171,7 +176,7 @@ exactly when you are looking at some other tab. The action line below it does
 
 | Tab | What it holds |
 | --- | --- |
-| `Run` | transport, mode, current topic and who's talking on the left; the queue, topic injection, transcript and "say a line as" (typed **or** spoken) on the right |
+| `Run` | driving it on the left — mode, Start/Stop, what's next, what's on now, and the four ways to change it; watching it on the right — who's talking, the transcript, and "say a line as" (typed **or** spoken) |
 | `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
 | `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
 | `Outputs` | where the audio goes. Connect the bot and join a voice channel here |
