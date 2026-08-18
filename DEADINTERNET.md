@@ -420,7 +420,19 @@ The ad read is a spoken line like any other: it goes into the Run tab's
 transcript and the event log's `speech` lines, with a separate `run` entry
 recording that it was an ad and what it played over. It is added *between* the
 two segments, so it belongs to neither and never shows up in what a character
-learns from.
+learns from. It carries `kind="ad"` rather than `"bot"`: it is a real spoken
+line and belongs in the transcript, but it is not the show, so it never counts
+as the hosts having had a conversation and a character never learns from reading
+an advert. The transcript labels it `(ad)`.
+
+**Nothing runs while the channel is empty.** Topic rotation sits earlier in the
+turn loop than the pause-when-empty guard, so it used to carry on into an empty
+room — announcing topics, and once the ad break lived there, reading a full
+sponsor spot every few minutes to nobody. The ad's own line in the transcript
+then satisfied the "did a segment happen" check for the next one, so it
+sustained itself indefinitely. Left overnight, that is all it did. Rotation is
+now refused while paused; **Switch topic now** still overrides, since whoever
+pressed it can see the channel is empty.
 
 **Pressing "Switch topic now" runs the break too** — it is the same code path as
 the timer. Two exceptions, both so a manual switch is not punished: nothing runs
