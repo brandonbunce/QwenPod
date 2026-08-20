@@ -18,6 +18,16 @@ import gradio as gr
 POLL_INTERVAL = 1.5
 POLL_LIFETIME = 3600
 
+# The raw box updates on its own, faster cadence. It is the one thing here
+# where 1.5s reads as stuttering rather than live, and it is also the cheapest
+# thing to produce -- a string join off a bounded buffer, against a full poll's
+# four reports and a transcript render. So the feed ticks at RAW_INTERVAL and
+# does the expensive work only every POLL_INTERVAL.
+#
+# One generator, not two: gradio's queue has four concurrency slots for the
+# whole app, and a second permanent stream per open tab would spend them.
+RAW_INTERVAL = 0.3
+
 # How long a freshly loaded page waits for the startup tts-server boot to
 # register the roster before giving up and leaving it to Refresh voices.
 # Generous: it covers loading the model plus re-encoding every speaker.
@@ -35,6 +45,7 @@ class FeedUpdate(NamedTuple):
     it here is the single easiest way to reintroduce that bug.
     """
     status: Any        # header status bar
+    raw: Any           # Run tab: what the model is emitting, live
     transcript: Any    # Run tab
     run_topic: Any     # Run tab: current topic, with who pinned it
     run_queue: Any     # Run tab: upcoming topics
@@ -106,6 +117,7 @@ def poll(app, last_topic=None):
     q = queue_md(app)
     return FeedUpdate(
         status=app.status_line(),
+        raw=app.raw.render(),
         transcript="\n\n".join(lines) if lines else "_(nothing yet)_",
         run_topic=run_topic,
         run_queue=q,
@@ -122,19 +134,45 @@ def poll(app, last_topic=None):
     )
 
 
+def raw_only(app):
+    """A feed update that touches nothing but the raw box.
+
+    gr.update() with no arguments is a no-op the client applies as "leave this
+    component alone" -- the same trick poll() uses to avoid fighting anyone
+    typing in the topic box. Everything else here rides on that.
+    """
+    fields = {name: gr.update() for name in FeedUpdate._fields}
+    fields["raw"] = app.raw.render()
+    return FeedUpdate(**fields)
+
+
 def stream_status(app):
     """Live status feed.
+
+    Two cadences in one generator: the raw box every RAW_INTERVAL, everything
+    else every POLL_INTERVAL. A tick with nothing new in the box yields
+    nothing at all rather than an update in which every field is a no-op.
 
     Bounded so an abandoned tab eventually releases its queue worker; the
     Refresh button covers the gap after it expires.
     """
     deadline = time.monotonic() + POLL_LIFETIME
     last = None
+    seen = None
+    next_full = 0.0
     while time.monotonic() < deadline:
-        out = poll(app, last)
-        last = app.state.settings.topic
-        yield out
-        time.sleep(POLL_INTERVAL)
+        now = time.monotonic()
+        if now >= next_full:
+            next_full = now + POLL_INTERVAL
+            last = app.state.settings.topic
+            seen = app.raw.version
+            yield poll(app, last)
+        else:
+            version = app.raw.version
+            if version != seen:
+                seen = version
+                yield raw_only(app)
+        time.sleep(RAW_INTERVAL)
     yield poll(app, last)
 
 

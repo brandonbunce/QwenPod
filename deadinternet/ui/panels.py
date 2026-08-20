@@ -227,6 +227,16 @@ def build_run(app, init_names):
                 label="Who's talking",
                 info="Tick to let someone join the conversation. Saves immediately.")
 
+            # What the model is emitting, above what it actually said.
+            # A Textbox, not Markdown: this is unfiltered output, and a stray
+            # backtick or hash in it must render as itself rather than
+            # rearranging the page.
+            gr.Markdown("**Raw model output**")
+            r_raw = gr.Textbox(
+                value="", placeholder="(nothing yet)",
+                lines=8, max_lines=8, show_label=False,
+                interactive=False, container=False, elem_classes=["raw-box"])
+
             gr.Markdown("**Transcript**")
             r_transcript = gr.Markdown(
                 "_(nothing yet)_", height=380, container=True,
@@ -259,6 +269,7 @@ def build_run(app, init_names):
         run_inject=run_inject,
         run_inject_now=run_inject_now,
         run_inject_queue=run_inject_queue,
+        r_raw=r_raw,
         r_transcript=r_transcript,
         r_start=r_start,
         r_stop=r_stop,
@@ -547,6 +558,12 @@ def build_behaviour(app):
              "because the reasoning has to fit inside the same budget as the "
              "answer. Expect seconds of extra latency per line, which in a live "
              "call is dead air. The interrupt router never thinks either way.")
+    m_raw = gr.Checkbox(
+        value=state.settings.raw_feed, label="Show raw model output",
+        info="Streams every generation into a box on the Run tab as it "
+             "arrives - reasoning, false starts, the router's JSON, and the "
+             "empty completions behind a turn that never happened. Off puts "
+             "both providers back on a single buffered request.")
 
     gr.Markdown("### Conversation tuning")
     with gr.Row():
@@ -700,6 +717,7 @@ def build_behaviour(app):
         m_bye_tpl=m_bye_tpl,
         m_provider=m_provider,
         m_think=m_think,
+        m_raw=m_raw,
         m_refresh_models=m_refresh_models,
         m_model=m_model,
         m_oa_model=m_oa_model,

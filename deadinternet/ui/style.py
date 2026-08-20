@@ -205,6 +205,22 @@ body ::-webkit-scrollbar-corner { background: transparent; }
    size itself. */
 .mic-hint { font-size: 0.8rem; margin-top: -0.3rem; opacity: 0.75; }
 
+/* Raw model output. A Textbox for the same reason the event log is one -- it
+   is unfiltered generation, and a stray backtick or hash in it must render as
+   itself. Dimmer than the transcript below it: this is the working-out, not
+   the show. */
+.raw-box textarea {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--body-text-color-subdued);
+  background: var(--background-fill-primary);
+  white-space: pre-wrap;
+  /* No resize handle: the box is a window on a stream, and a dragged height
+     is undone by the next value gradio pushes into it. */
+  resize: none;
+}
+
 /* The event log is a Textbox so arbitrary message text cannot be read as
    markdown; monospace keeps its timestamp column aligned. */
 .log-box textarea {

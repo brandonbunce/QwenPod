@@ -22,9 +22,25 @@ AUTOSCROLL_JS = """
     }).observe(box, {childList: true, subtree: true, characterData: true});
     box.scrollTop = box.scrollHeight;
   };
-  const scan = () => document
-    .querySelectorAll(".transcript-box, .queue-box")
-    .forEach(stick);
+  // A textarea is a different problem: gradio sets its .value property, which
+  // mutates no nodes, so the observer above would never fire. Poll it instead
+  // -- one element, four times a second, against a box that is being written
+  // to five times a second anyway.
+  const stickTextarea = (ta) => {
+    if (ta.dataset.autoscroll) return;
+    ta.dataset.autoscroll = "1";
+    let pinned = true;
+    ta.addEventListener("scroll", () => {
+      pinned = ta.scrollHeight - ta.scrollTop - ta.clientHeight < 40;
+    });
+    setInterval(() => {
+      if (pinned && ta.isConnected) ta.scrollTop = ta.scrollHeight;
+    }, 250);
+  };
+  const scan = () => {
+    document.querySelectorAll(".transcript-box, .queue-box").forEach(stick);
+    document.querySelectorAll(".raw-box textarea").forEach(stickTextarea);
+  };
   scan();
   // Sub-tabs mount lazily, so the boxes may not exist yet at load.
   new MutationObserver(scan).observe(document.body, {childList: true, subtree: true});

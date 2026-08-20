@@ -26,6 +26,7 @@ from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
                               OpenAIClient)
+from deadinternet.rawfeed import NULL_TAP, RawFeed
 from deadinternet.transcribe import Whisper
 from deadinternet.tts import TTSClient
 from deadinternet.ui import APP_CSS, build
@@ -62,6 +63,8 @@ class DeadInternetApp:
         # Kept alongside the active client so the UI can list Ollama models
         # even while OpenAI is selected.
         self.ollama = OllamaClient(s.ollama_url, s.ollama_model)
+        # Built before the first client, because make_client attaches it.
+        self.raw = RawFeed()
         self.llm = self.make_client(s.provider)
         self.runtime = None
         self.director = None
@@ -83,13 +86,23 @@ class DeadInternetApp:
     def make_client(self, provider):
         s = self.state.settings
         if provider == PROVIDER_OPENAI:
-            return OpenAIClient(s.openai_url, s.openai_model)
-        self.ollama.model = s.ollama_model
-        # Read here rather than at construction: the Ollama client is shared
-        # and long-lived, so rebuild_llm() is what makes a settings change
-        # take effect without restarting the app.
-        self.ollama.think = s.thinking
-        return self.ollama
+            client = OpenAIClient(s.openai_url, s.openai_model)
+        else:
+            client = self.ollama
+            client.model = s.ollama_model
+            # Read here rather than at construction: the Ollama client is
+            # shared and long-lived, so rebuild_llm() is what makes a settings
+            # change take effect without restarting the app.
+            client.think = s.thinking
+        # Attaching the tap is the whole of what turns streaming on; the null
+        # one leaves both providers on their original buffered request.
+        client.tap = self.raw if s.raw_feed else NULL_TAP
+        if not s.raw_feed:
+            # Emptied rather than left as it was: nothing will write to it
+            # again, and a box still showing the last generation an hour later
+            # reads as a live feed that has hung.
+            self.raw.clear()
+        return client
 
     def rebuild_llm(self):
         """Swap the active backend. The director reads self.llm through its

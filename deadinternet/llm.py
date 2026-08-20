@@ -11,6 +11,8 @@ import re
 
 import requests
 
+from .rawfeed import NULL_TAP
+
 # Keeps an Ollama model resident between turns; a cold reload costs seconds
 # and would show up as dead air in the voice channel.
 KEEP_ALIVE = "30m"
@@ -59,6 +61,11 @@ class BaseLLM:
         self.http = requests.Session()
         # Providers that cannot do it leave this False and ignore it.
         self.think = False
+        # Where token deltas go while a request is in flight. The null tap
+        # accepts and discards them, and its active=False is also what keeps
+        # both providers on their original non-streaming request: attaching a
+        # real one (app.py does) is the whole of what turns streaming on.
+        self.tap = NULL_TAP
 
     # ---- provider hooks ------------------------------------------------
     def models(self):
@@ -69,11 +76,16 @@ class BaseLLM:
         return True, ""
 
     def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
-              think=None) -> str:
+              think=None, label="") -> str:
         """think: None follows the client's setting, False forces it off.
 
         Forcing it off is for calls where reasoning buys nothing and the
         latency is felt -- the router, in practice.
+
+        label names the generation in the raw feed -- a speaker, 'router',
+        'ad'. Cosmetic, but every subclass must accept it: route() passes
+        think= on every provider and a signature that refused it lost the
+        turn, which is the same shape of bug one argument along.
         """
         raise NotImplementedError
 
@@ -195,7 +207,9 @@ class BaseLLM:
                           "a follow-up thought.")
             messages.append({"role": "user", "content": opener})
 
-        return self._clean(self._chat(messages, num_predict, temperature), speaker.name)
+        return self._clean(
+            self._chat(messages, num_predict, temperature, label=speaker.name),
+            speaker.name)
 
     # ---- vision ---------------------------------------------------------------
     def describe_image(self, mime: str, b64: str, caption: str = "",
@@ -221,7 +235,8 @@ class BaseLLM:
             self._image_message(prompt, b64, mime),
         ]
         # Low temperature: this is reportage, not personality.
-        return self._clean(self._chat(messages, num_predict, 0.3), "narrator")
+        return self._clean(
+            self._chat(messages, num_predict, 0.3, label="image"), "narrator")
 
     # ---- persona authoring ---------------------------------------------------
     def build_persona(self, name: str, samples, note: str = "") -> str:
@@ -262,6 +277,7 @@ class BaseLLM:
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             num_predict=700,
             temperature=0.7,
+            label=f"persona: {name}",
         ).strip()
 
     # ---- evolving characters --------------------------------------------------
@@ -315,6 +331,7 @@ class BaseLLM:
             num_predict=400,
             temperature=0.7,
             think=True,
+            label=f"evolve: {name}",
         ).strip()
         # Models wrap a rewritten prompt in quotes or a "Here is..." lead-in
         # often enough to be worth handling; and the length rule above is a
@@ -361,6 +378,7 @@ class BaseLLM:
                 num_predict=140,
                 temperature=1.0,
                 think=False,
+                label=f"ad: {speaker_name or 'narrator'}",
             ),
             speaker_name or "narrator")
 
@@ -395,6 +413,7 @@ class BaseLLM:
                 # critical path of answering a real person, and every second
                 # of it is silence in the channel.
                 think=False,
+                label="router",
             )
             pick = json.loads(raw).get("speaker", "")
         except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError, RuntimeError):
@@ -449,11 +468,14 @@ class OllamaClient(BaseLLM):
         # the text alone, which is why this cannot hard-fail.
         return {"role": "user", "content": text, "images": [b64]}
 
-    def _post(self, messages, num_predict, temperature, fmt=None, think=False):
+    def _post(self, messages, num_predict, temperature, fmt=None, think=False,
+              label=""):
         payload = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            # Streaming only when someone is watching. With no tap attached
+            # this is the original single-response request, byte for byte.
+            "stream": self.tap.active,
             "keep_alive": KEEP_ALIVE,
             # Off by default: a reasoning model otherwise spends the whole
             # budget in `thinking` and hands back empty content, and the
@@ -464,18 +486,60 @@ class OllamaClient(BaseLLM):
         }
         if fmt:
             payload["format"] = fmt
+        if payload["stream"]:
+            return self._post_streamed(payload, label)
         r = self.http.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         r.raise_for_status()
         return r.json().get("message", {})
 
+    def _post_streamed(self, payload, label):
+        """Same request, read as it arrives.
+
+        Returns the same {"content", "thinking"} shape the buffered path
+        does, so _chat's retry-on-empty logic above is unchanged. A malformed
+        line is skipped rather than fatal: one unreadable chunk should cost a
+        few tokens in the box, not the turn.
+        """
+        call = self.tap.begin(label)
+        content, thinking = [], []
+        try:
+            with self.http.post(f"{self.base_url}/api/chat", json=payload,
+                                timeout=self.timeout, stream=True) as r:
+                r.raise_for_status()
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = obj.get("message") or {}
+                    piece = msg.get("content") or ""
+                    reasoning = msg.get("thinking") or ""
+                    if piece:
+                        content.append(piece)
+                        call.delta(piece)
+                    if reasoning:
+                        thinking.append(reasoning)
+                        call.delta(reasoning, thinking=True)
+                    if obj.get("done"):
+                        break
+        except Exception as exc:
+            # Named in the box and re-raised unchanged, so the callers that
+            # already catch RequestException still see what they expect.
+            call.end(f"failed: {type(exc).__name__}")
+            raise
+        call.end()
+        return {"content": "".join(content), "thinking": "".join(thinking)}
+
     def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
-              think=None) -> str:
+              think=None, label="") -> str:
         want = self.think if think is None else think
         # Thinking has to fit inside num_predict alongside the answer, so a
         # request that asks for it is given room for it up front rather than
         # coming back empty and paying for a second round trip every line.
         budget = num_predict * THINK_BUDGET if want else num_predict
-        msg = self._post(messages, budget, temperature, fmt, want)
+        msg = self._post(messages, budget, temperature, fmt, want, label)
         content = (msg.get("content") or "").strip()
         if content:
             return content
@@ -483,7 +547,7 @@ class OllamaClient(BaseLLM):
         # room to finish reasoning and still emit an answer.
         if msg.get("thinking") and budget == num_predict:
             msg = self._post(messages, num_predict * THINK_BUDGET, temperature,
-                             fmt, want)
+                             fmt, want, label)
             content = (msg.get("content") or "").strip()
         return content
 
@@ -551,7 +615,7 @@ class OpenAIClient(BaseLLM):
         return payload
 
     def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
-              think=None) -> str:
+              think=None, label="") -> str:
         # think is accepted and ignored: it maps onto Ollama's `think` field,
         # which has no equivalent here. Reasoning on an OpenAI-compatible
         # endpoint is a property of the model you pick, not of the request.
@@ -561,10 +625,18 @@ class OpenAIClient(BaseLLM):
             raise RuntimeError(f"{self.api_key_env} is not set")
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
+        streaming = self.tap.active
         for _ in range(3):
             payload = self._build(messages, num_predict, temperature, fmt)
+            if streaming:
+                payload["stream"] = True
+            # stream= at the requests level as well, or iter_lines would only
+            # ever see one already-buffered body. The status code is still
+            # available before the body is read, so the 400 adaptation below
+            # works either way.
             r = self.http.post(f"{self.base_url}/chat/completions", json=payload,
-                               headers=headers, timeout=self.timeout)
+                               headers=headers, timeout=self.timeout,
+                               stream=streaming)
             if r.status_code == 400:
                 # Adapt to whichever parameter shape this model wants and
                 # retry, rather than losing the turn.
@@ -579,11 +651,45 @@ class OpenAIClient(BaseLLM):
                     self._send_temperature = False
                     continue
             r.raise_for_status()
+            if streaming:
+                return self._read_sse(r, label)
             choices = r.json().get("choices") or []
             if not choices:
                 return ""
             return (choices[0].get("message", {}).get("content") or "").strip()
         return ""
+
+    def _read_sse(self, r, label):
+        """Server-sent events into the raw feed, returning the joined text.
+
+        Begun here rather than before the request so the retries above -- which
+        re-send the whole thing with a different parameter shape -- do not each
+        open an abandoned block in the box.
+        """
+        call = self.tap.begin(label)
+        out = []
+        try:
+            with r:
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    for ch in obj.get("choices") or []:
+                        piece = (ch.get("delta") or {}).get("content") or ""
+                        if piece:
+                            out.append(piece)
+                            call.delta(piece)
+        except Exception as exc:
+            call.end(f"failed: {type(exc).__name__}")
+            raise
+        call.end()
+        return "".join(out).strip()
 
 
 def make_llm(settings) -> BaseLLM:

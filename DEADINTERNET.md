@@ -203,7 +203,7 @@ one. Decorate `.action-line.block` and flatten `.action-line.prose`.
 
 | Tab | What it holds |
 | --- | --- |
-| `Run` | driving it on the left — mode, Start/Stop, what's next, what's on now, and the four ways to change it; watching it on the right — who's talking, the transcript, and "say a line as" (typed **or** spoken) |
+| `Run` | driving it on the left — mode, Start/Stop, what's next, what's on now, and the four ways to change it; watching it on the right — who's talking, the raw model output, the transcript, and "say a line as" (typed **or** spoken) |
 | `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
 | `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
 | `Outputs` | where the audio goes. Connect the bot and join a voice channel here |
@@ -257,6 +257,46 @@ every request. Off by default, and worth understanding before turning it on:
   checkbox is accepted and ignored on that provider.
 - A model with no reasoning mode ignores `think` entirely, so turning this on
   against `gemma4` changes nothing but the budget.
+
+### Watching the model work
+
+**Raw model output** sits above the transcript on **Run** and fills as each
+generation arrives. The transcript shows what was *said* — cleaned by
+`BaseLLM._clean`, trimmed back to the last complete sentence, and only the lines
+that survived. This shows the other thing: the reasoning, the false starts, the
+JSON the router answers with, the persona rewrite that never reaches the
+channel, and the empty completion behind a turn that silently did not happen.
+That last one is the reason it exists — an empty generation used to look
+identical to a quiet moment.
+
+Each generation is a labelled block (`── Alice ──`, `router`, `ad: Bob`,
+`evolve: Bob`), with reasoning marked `·` and still live ones marked `(live)`.
+Blocks are kept **apart rather than concatenated**: persona evolution runs in the
+background while the ad break plays, and two generations interleaved token by
+token would be unreadable — you would not be able to tell there were two.
+
+- **It is what turns streaming on.** `client.tap` is the whole mechanism: with
+  the null tap attached, Ollama still sends `"stream": false` and the OpenAI
+  client still reads one buffered body, byte for byte the request they made
+  before this existed. **Show raw model output** on **Behaviour** attaches or
+  drops the tap, and switching it off empties the box rather than leaving a
+  frozen generation that reads as a hung feed.
+- **The box updates faster than everything else.** The live feed runs at 1.5s;
+  1.5s in this box reads as stuttering rather than live, so `stream_status`
+  ticks at 0.3s and does the expensive work — four reports, a transcript render
+  — only every 1.5s. The cheap ticks push `gr.update()` into every other field,
+  which the client applies as "leave this alone", and a tick with nothing new
+  yields nothing at all. **One generator, not two:** gradio's queue has four
+  concurrency slots for the whole app and a second permanent stream per open
+  tab would spend them.
+- **Nothing is persisted.** It is a bounded in-memory ring — eight calls, 3000
+  characters each, tail-kept — that dies with the process. Model output about
+  real people never reaches a file.
+- **A textarea, not Markdown**, for the same reason the event log is: this is
+  unfiltered output, and a stray backtick or hash in it must render as itself.
+  Gradio sets a textarea's `.value` property, which mutates no nodes, so the
+  autoscroll `MutationObserver` used for the transcript never fires — the raw
+  box is pinned by a 250ms interval instead.
 
 ### Discord commands
 

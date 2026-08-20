@@ -340,6 +340,11 @@ class Settings:
     # Let the LLM reason before answering (Ollama's `think`). Off by default:
     # it costs seconds per line, which is dead air in a live call.
     thinking: bool = False
+    # Show the model's raw output in the Run tab as it arrives. Costs a
+    # streaming request instead of a buffered one, which is why it is a
+    # setting at all -- turning it off puts both providers back on the exact
+    # request they made before the box existed.
+    raw_feed: bool = True
 
     # ---- between topics ----
     # Rewrite characters from what they said in the segment that just ended.
