@@ -369,6 +369,21 @@ class Settings:
     # Stored blank rather than pre-filled so a later change to the default
     # reaches anyone who never edited it.
     adbreak_prompt: str = ""
+    # The hand-off into the break, spoken by whoever is about to read the ad
+    # *while* the ad is still being written. Writing it takes seconds and
+    # synthesising it takes more, and before this the break opened with all of
+    # that as silence -- which in a live call sounds like the show has stopped,
+    # not like a break. One line per sentence, picked at random.
+    # {name} is the reader, {topic} the segment that just ended.
+    adbreak_intro_enabled: bool = True
+    adbreak_intro_template: str = (
+        "Alright, we'll pick this up in a moment. First, a word from our sponsor.\n"
+        "Let's take a break there. A message from our sponsor.\n"
+        "Hold that thought - we'll be right back, after a word from our sponsor.\n"
+        "That's a good place to pause. Here's a message from our sponsor.\n"
+        "We'll move on to the next topic shortly. First, our sponsor.\n"
+        "Okay, we'll leave that there. A quick word from the people paying for this."
+    )
     barge_in: bool = True
     # How many unanswered messages to hold. Everything past this is refused
     # rather than silently replacing something already waiting, which is what

@@ -159,6 +159,8 @@ class BehaviourPanel:
     m_adbreak: Any
     m_ad_gain: Any
     m_ad_prompt: Any
+    m_ad_intro: Any
+    m_ad_intro_tpl: Any
     m_music_up: Any
     m_music_list: Any
     m_music_clear: Any

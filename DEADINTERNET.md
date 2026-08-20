@@ -466,10 +466,37 @@ random speaker reads an invented sponsor spot about something the segment
 actually covered, over a music bed from `music/` (gitignored — upload tracks on
 the same tab, one is picked at random per break).
 
+**The bed is levelled against the read, not against the file.** *Music level
+under the read* is a ratio: 0.22 means the bed sits at 22% of the read's RMS,
+about 13 dB under it. It used to multiply the decoded track directly, which made
+the slider mean nothing across a folder — uploaded tracks are mastered anywhere
+from -20 to -6 dBFS, so at one setting one bed was inaudible and the next buried
+the voice. Measured on two real tracks, the same 0.22 needed gains of 0.103 and
+0.150 to land in the same place. The level is measured over the **window
+actually used**, not the whole file, or a track that opens on a quiet intro and
+lands on a chorus would be scaled by a level that appears nowhere in what plays.
+A silent or unreadable track falls back to the literal multiplier rather than
+dividing by nothing.
+
 The ad and the rewriting are one feature, not two. Rewriting takes tens of
 seconds and the gap is the only place it can happen — but a gap that long is dead
 air. So the rewrite starts first and the ad plays **over** it. The break is the
 loading screen.
+
+**Someone hands over to it out loud.** *Hand over to the break out loud* has
+the reader say a line — "Alright, we'll pick this up in a moment. First, a word
+from our sponsor." — and that line is spoken **while the ad is still being
+written**, not after. Writing the spot takes seconds and synthesising it takes
+more, and before this the break opened with all of it as silence, which in a
+live call sounds like the show has stopped rather than like a break. The lines
+are editable on the same tab, one per line, picked at random; `{name}` is
+whoever is reading and `{topic}` is the segment that just ended.
+
+The hand-off is its own turn in the transcript, `kind="ad"` for the same reasons
+the read is. If it cannot be synthesised the break still runs — and if the *ad*
+fails after the hand-off has already played, the next topic simply follows it.
+That is the one awkward case, and it is the right trade: the alternative is
+waiting to find out, which is the silence this removes.
 
 If the rewrites overrun *Seconds to hold the next topic*, the show carries on
 anyway and they land whenever they finish — `system_prompt()` is read fresh every

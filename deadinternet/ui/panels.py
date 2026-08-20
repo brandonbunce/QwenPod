@@ -638,6 +638,17 @@ def build_behaviour(app):
              "transcript are always appended underneath whatever you put here, "
              "so you cannot accidentally write a brief that has nothing to go "
              "on. Ask for a jingle, a public information film, a threat.")
+    m_ad_intro = gr.Checkbox(
+        value=state.settings.adbreak_intro_enabled,
+        label="Hand over to the break out loud",
+        info="The reader says a line before the spot - spoken while the ad is "
+             "still being written, so the break opens with someone talking "
+             "instead of with however long the model takes.")
+    m_ad_intro_tpl = gr.Textbox(
+        value=state.settings.adbreak_intro_template, lines=6,
+        label="Hand-off lines",
+        info="One per line, picked at random. {name} is whoever is reading, "
+             "{topic} is the segment that just ended.")
     with gr.Group():
         gr.Markdown("**Background music** - one track picked at random each break.")
         with gr.Row():
@@ -735,6 +746,8 @@ def build_behaviour(app):
         m_adbreak=m_adbreak,
         m_ad_gain=m_ad_gain,
         m_ad_prompt=m_ad_prompt,
+        m_ad_intro=m_ad_intro,
+        m_ad_intro_tpl=m_ad_intro_tpl,
         m_music_up=m_music_up,
         m_music_list=m_music_list,
         m_music_clear=m_music_clear,

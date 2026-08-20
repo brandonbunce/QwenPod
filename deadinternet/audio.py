@@ -155,6 +155,10 @@ def ack_pcm(peak: float = CUE_PEAK) -> bytes:
 BED_LEAD_IN = 1.6
 BED_TAIL = 2.0
 BED_FADE = 1.2
+# Ceiling on the bed's own normalisation gain, for the same reason MAX_GAIN
+# exists above: a near-silent or badly-encoded track is a broken file, not
+# something to amplify eighty-fold into hiss.
+BED_MAX_SCALE = 8.0
 
 
 def _decode(path: str, rate: int):
@@ -175,6 +179,18 @@ def _decode(path: str, rate: int):
 
 def bed_under(speech_wav: bytes, music_path: str, gain: float = 0.22):
     """Lay a music bed under a spoken clip. -> (wav bytes, info).
+
+    `gain` is a ratio against the speech, not an absolute multiplier: 0.22
+    means the bed sits at 22% of the read's RMS, about 13 dB under it. It used
+    to multiply the decoded file directly, which made the setting meaningless
+    across a folder -- uploaded tracks are mastered anywhere from -20 to -6
+    dBFS, so one bed was inaudible and the next buried the read, at the same
+    slider position. Measuring both and scaling to the ratio is what makes the
+    number mean the same thing for every track.
+
+    The bed is measured over the window actually used, not the whole file: a
+    track that opens on a quiet intro and lands on a chorus would otherwise be
+    scaled by a level that appears nowhere in what gets played.
 
     Never raises: an ad break that cannot find its music should still be an ad
     break. On any failure the speech comes back untouched with the reason in
@@ -204,7 +220,19 @@ def bed_under(speech_wav: bytes, music_path: str, gain: float = 0.22):
     # open on the same two seconds every time.
     start = 0 if len(music) <= total else int(np.random.default_rng().integers(
         0, len(music) - total))
-    bed = music[start:start + total].copy() * float(gain)
+    bed = music[start:start + total].copy()
+
+    speech_rms = float(np.sqrt(np.mean(np.square(speech)))) if speech.size else 0.0
+    bed_rms = float(np.sqrt(np.mean(np.square(bed)))) if bed.size else 0.0
+    if speech_rms > SILENCE_RMS and bed_rms > SILENCE_RMS:
+        scale = min(float(gain) * speech_rms / bed_rms, BED_MAX_SCALE)
+        levelled = True
+    else:
+        # Nothing to measure against. Fall back to the old literal multiplier
+        # rather than dividing by a level that is effectively zero.
+        scale = float(gain)
+        levelled = False
+    bed *= scale
 
     fade = min(int(BED_FADE * sr), total // 2)
     if fade > 0:
@@ -225,6 +253,12 @@ def bed_under(speech_wav: bytes, music_path: str, gain: float = 0.22):
         "bed": True,
         "track": os.path.basename(music_path),
         "gain": round(float(gain), 3),
+        # What the ratio actually cost this track, so a bed that still sounds
+        # wrong can be told apart from a setting that was never applied.
+        "scale": round(scale, 3),
+        "levelled": levelled,
+        "speech_rms": round(speech_rms, 5),
+        "bed_rms_in": round(bed_rms, 5),
         "duration": round(total / sr, 2),
         "speech": round(len(speech) / sr, 2),
     }

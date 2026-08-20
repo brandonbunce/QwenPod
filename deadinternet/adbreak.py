@@ -15,7 +15,7 @@ import random
 import time
 
 from .audio import bed_under
-from .config import Turn, music_tracks
+from .config import Turn, music_tracks, render_template
 from .events import RUN, VOICE
 
 
@@ -75,7 +75,8 @@ class AdBreak:
         self.log = log
         self.events = events
         self.debug = {"last": "", "last_error": None, "breaks": 0,
-                      "evolved": 0, "last_track": "", "last_evolved": ""}
+                      "evolved": 0, "last_track": "", "last_evolved": "",
+                      "last_intro": ""}
 
     # ---- the sponsor read -------------------------------------------------
     async def play(self, topic, turns, roster):
@@ -91,16 +92,29 @@ class AdBreak:
         reader = random.choice(roster)
         heard = [f"{t.speaker}: {t.text}" for t in turns][-12:]
 
+        # Started before the hand-off is spoken, not after. Writing the ad is
+        # the slow part, and covering exactly that latency is what the hand-off
+        # is for -- awaiting it first would put the silence back and leave the
+        # line playing into a break that was already ready.
+        #
+        # The reader's own prompt, so an evolved character reads the spot as
+        # who they have become. Read here rather than captured earlier because
+        # evolve() may be rewriting it concurrently -- attribute assignment is
+        # atomic, so this gets the old or the new one, never a half-written one.
+        writing = loop.run_in_executor(
+            None, lambda: self.llm.write_ad(topic, heard, reader.name,
+                                            s.adbreak_prompt,
+                                            reader.system_prompt()))
         try:
-            # The reader's own prompt, so an evolved character reads the spot
-            # as who they have become. Read here rather than captured earlier
-            # because evolve() may be rewriting it concurrently -- attribute
-            # assignment is atomic, so this gets the old or the new one, never
-            # a half-written one.
-            text = await loop.run_in_executor(
-                None, lambda: self.llm.write_ad(topic, heard, reader.name,
-                                                s.adbreak_prompt,
-                                                reader.system_prompt()))
+            await self._hand_off(reader, topic)
+        except Exception as e:
+            # Belt and braces around an already-guarded method: an exception
+            # escaping here would abandon `writing` half-run, and the ad is
+            # worth playing whether or not anyone introduced it.
+            self.log(f"[adbreak] hand-off failed - {e}")
+
+        try:
+            text = await writing
         except Exception as e:
             self.debug["last_error"] = f"could not write the ad: {e}"
             self.log(f"[adbreak] skipped - {e}")
@@ -152,6 +166,40 @@ class AdBreak:
                                  + (f" over {info['track']}" if info.get("bed") else " (no music)"))
 
         await self.speak(reader.name, text, wav)
+        return True
+
+    async def _hand_off(self, reader, topic):
+        """The line that hands over to the break, in the reader's own voice.
+
+        Spoken over the top of the ad being written, so the break opens with
+        someone talking instead of with however many seconds the model takes.
+
+        Its own turn in the transcript, kind="ad" for the same reasons the read
+        is: it is genuinely spoken, but it is not the show, and a character
+        must never learn from it or have it count as a segment having happened.
+
+        Returns whether anything was said. Every failure is a skipped line and
+        a log entry -- the break still runs.
+        """
+        s = self.state.settings
+        if not s.adbreak_intro_enabled:
+            return False
+        line = render_template(s.adbreak_intro_template, rng=random,
+                               name=reader.name, topic=topic)
+        if not line:
+            return False
+        try:
+            wav = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: self.synth(line, reader.name))
+        except Exception as e:
+            # Not fatal, and deliberately not an early return from play(): the
+            # ad is already being written and is worth playing on its own.
+            self.log(f"[adbreak] hand-off skipped - {e}")
+            return False
+        self.debug["last_intro"] = f"{reader.name}: {line}"[:160]
+        self.log(f"[adbreak] hand-off - {reader.name}: {line}")
+        self.state.add_turn(Turn(speaker=reader.name, text=line, kind="ad"))
+        await self.speak(reader.name, line, wav)
         return True
 
     # ---- rewriting the cast ------------------------------------------------

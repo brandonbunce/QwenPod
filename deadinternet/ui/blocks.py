@@ -196,6 +196,8 @@ def build(app):
                 u.m_adbreak = behaviour.m_adbreak
                 u.m_ad_gain = behaviour.m_ad_gain
                 u.m_ad_prompt = behaviour.m_ad_prompt
+                u.m_ad_intro = behaviour.m_ad_intro
+                u.m_ad_intro_tpl = behaviour.m_ad_intro_tpl
                 u.m_music_up = behaviour.m_music_up
                 u.m_music_list = behaviour.m_music_list
                 u.m_music_clear = behaviour.m_music_clear
@@ -365,6 +367,9 @@ def build(app):
         bind(u.m_adbreak, "adbreak_enabled", "ad break", bool)
         bind(u.m_ad_gain, "adbreak_music_gain", "music level", float, "release")
         bind(u.m_ad_prompt, "adbreak_prompt", "ad brief", None, "blur")
+        bind(u.m_ad_intro, "adbreak_intro_enabled", "spoken hand-off", bool)
+        bind(u.m_ad_intro_tpl, "adbreak_intro_template", "hand-off lines",
+             None, "blur")
         u.m_music_up.upload(bound(t_behaviour.upload_music, app), u.m_music_up,
                             [u.m_music_list, u.sb_action])
         u.m_music_clear.click(bound(t_behaviour.clear_music, app), None,
