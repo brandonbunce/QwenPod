@@ -54,18 +54,23 @@ MENTION_RE = re.compile(r"<@[!&]?\d+>")
 
 
 class _Mixer(discord.AudioSource):
-    """Speech with short cues added on top of it.
+    """Everything audible at once, summed into one outgoing stream.
 
-    A voice client plays exactly one source, so the obvious way to make an
-    acknowledgement noise -- play it -- would stop whoever is mid-sentence.
-    That is the opposite of what an acknowledgement is for: it exists so that
-    someone typing while the bot talks gets an answer to "did that land?"
-    without the bot having to shut up to say so.
+    A voice client plays exactly one source. That single fact is why this
+    class exists twice over:
 
-    So the cue is summed into the speech frames on their way out. read() is
-    called on discord.py's player thread and cue() from the event loop, hence
-    the lock. Wrapping a base of None turns this into a plain cue player, for
-    when nothing is talking.
+      * an acknowledgement noise played the obvious way would stop whoever is
+        mid-sentence, which is the opposite of what an acknowledgement is for;
+      * and a second speaker cannot start without cutting off the first, so
+        two people talking over each other is impossible by construction.
+
+    So cues are summed into the frames already on their way out, and extra
+    voices are added the same way -- as sources this mixer reads alongside the
+    base and adds together. read() runs on discord.py's player thread while
+    cue() and add_voice() are called from the event loop, hence the lock.
+
+    Wrapping a base of None turns this into a plain cue player, for when
+    nothing is talking.
     """
 
     # 20ms of 48kHz stereo 16-bit, which is one Opus frame.
@@ -73,11 +78,21 @@ class _Mixer(discord.AudioSource):
     # Roughly two seconds of cues. A backlog longer than that is a stream of
     # notifications nobody can tell apart anyway.
     MAX_CUE = FRAME * 100
+    # How many voices may pile on top of the base one. Past three or so it
+    # stops being an argument and becomes noise nobody can pick a word out of.
+    MAX_VOICES = 3
+    # Overlaid voices come in a little under the one already talking, so the
+    # original line stays followable and each addition reads as someone
+    # cutting in rather than as the mix getting louder. Speech is normalised
+    # to -20 dBFS RMS, so summing four at full scale would clip constantly.
+    VOICE_GAIN = 0.78
 
-    def __init__(self, base: Optional[discord.AudioSource]):
+    def __init__(self, base: Optional[discord.AudioSource], max_voices: int = MAX_VOICES):
         self._base = base
         self._lock = threading.Lock()
         self._cue = bytearray()
+        self._voices: List[discord.AudioSource] = []
+        self._max_voices = max(0, int(max_voices))
 
     def cue(self, pcm: bytes) -> bool:
         with self._lock:
@@ -86,31 +101,80 @@ class _Mixer(discord.AudioSource):
             self._cue.extend(pcm)
             return True
 
+    def add_voice(self, source: discord.AudioSource) -> bool:
+        """Start reading `source` alongside whatever is already playing."""
+        with self._lock:
+            if len(self._voices) >= self._max_voices:
+                return False
+            self._voices.append(source)
+            return True
+
+    def voices(self) -> int:
+        with self._lock:
+            return len(self._voices)
+
     def is_opus(self) -> bool:
         return False
+
+    @staticmethod
+    def _pad(chunk: bytes) -> bytes:
+        return chunk + b"\x00" * (_Mixer.FRAME - len(chunk))
 
     def read(self) -> bytes:
         data = self._base.read() if self._base else b""
         with self._lock:
-            if not self._cue:
-                return data
-            take = bytes(self._cue[:self.FRAME])
+            extra = list(self._voices)
+            cue = bytes(self._cue[:self.FRAME])
             del self._cue[:self.FRAME]
-        if len(data) < self.FRAME:
-            # The speech ended with a cue still going. Padding to a full frame
-            # keeps the player running long enough to finish it; returning
-            # short here would cut the cue off mid-note. Once both are empty
-            # read() returns b"" and playback ends normally.
-            data = data + b"\x00" * (self.FRAME - len(data))
-        if len(take) < self.FRAME:
-            take = take + b"\x00" * (self.FRAME - len(take))
-        a = np.frombuffer(data, dtype="<i2").astype(np.int32)
-        b = np.frombuffer(take, dtype="<i2").astype(np.int32)
-        return np.clip(a + b, -32768, 32767).astype("<i2").tobytes()
+
+        # Every overlaid voice is read every frame whether or not it has
+        # anything left, so one that has finished is noticed and dropped
+        # rather than being read forever.
+        parts, spent = [], []
+        for src in extra:
+            chunk = src.read()
+            if chunk:
+                parts.append(chunk)
+            else:
+                spent.append(src)
+        if spent:
+            with self._lock:
+                self._voices = [v for v in self._voices if v not in spent]
+            for src in spent:
+                try:
+                    src.cleanup()
+                except Exception:
+                    pass
+
+        if not cue and not parts:
+            return data
+        # Something is still going, so a short or empty base must be padded to
+        # a full frame rather than returned as-is: a short read ends playback,
+        # which would cut off whoever is still mid-word. Once everything is
+        # empty this returns b"" and the player stops normally.
+        mixed = np.frombuffer(self._pad(data) if len(data) < self.FRAME else data,
+                              dtype="<i2").astype(np.int32)
+        for chunk in parts:
+            voice = np.frombuffer(self._pad(chunk) if len(chunk) < self.FRAME else chunk,
+                                  dtype="<i2").astype(np.int32)
+            mixed += (voice * self.VOICE_GAIN).astype(np.int32)
+        if cue:
+            mixed += np.frombuffer(self._pad(cue) if len(cue) < self.FRAME else cue,
+                                   dtype="<i2").astype(np.int32)
+        # A backstop, not the level control: VOICE_GAIN and MAX_VOICES are
+        # what keep the sum in range, and clipping here should be rare.
+        return np.clip(mixed, -32768, 32767).astype("<i2").tobytes()
 
     def cleanup(self):
         if self._base:
             self._base.cleanup()
+        with self._lock:
+            extra, self._voices = self._voices, []
+        for src in extra:
+            try:
+                src.cleanup()
+            except Exception:
+                pass
 
 
 class _LogBridge(logging.Handler):
@@ -193,6 +257,9 @@ class DiscordRuntime:
         # it after Discord terminates the call.
         self.target_channel_id: Optional[int] = None
         self.auto_rejoin = True
+        # How many voices may talk over the one already speaking. Pushed on by
+        # app.sync_voice_settings(); bot.py never reads settings itself.
+        self.overlap_max = _Mixer.MAX_VOICES
         self._watchdog: Optional[asyncio.Task] = None
         self._rejoin_fails = 0
         self._next_rejoin = 0.0
@@ -294,11 +361,26 @@ class DiscordRuntime:
             if not self.on_say:
                 await self._reply(interaction, "The director is not running.")
                 return
+            # Autocomplete suggests; it does not constrain. Discord submits
+            # whatever was typed, and an unknown name reached _handle_manual,
+            # which does `if not speaker: return` -- so the line disappeared
+            # while the reply still said it had been queued.
+            resolved = self._resolve_speaker(speaker)
+            if resolved is None:
+                await self._reply(
+                    interaction,
+                    f"I do not have a voice called **{speaker[:80]}**. "
+                    "Pick one from the list the command offers.")
+                return
+            speaker = resolved
             try:
                 # say_now hops to this loop and blocks on the result, so it
                 # cannot run on the loop it is waiting for.
+                # overlap=True: two people spamming this should talk over
+                # each other, not queue up behind one another. The director
+                # still has the final say via the setting.
                 await asyncio.get_running_loop().run_in_executor(
-                    None, self.on_say, speaker, body)
+                    None, self.on_say, speaker, body, True)
             except Exception as e:
                 self.command_stats["last_error"] = str(e)
                 await self._reply(interaction, f"Could not queue that - {e}")
@@ -318,6 +400,25 @@ class DiscordRuntime:
             hits = [n for n in names if q in n.lower()] if q else names
             return [discord.app_commands.Choice(name=n[:100], value=n)
                     for n in hits[:MAX_CHOICES]]
+
+    def _resolve_speaker(self, name: str):
+        """A typed name -> the roster's spelling of it, or None.
+
+        Case-insensitive because the value comes from a text box: someone who
+        types a name rather than picking it should not be punished for the
+        capital letter.
+        """
+        names = list(self.speaker_names() if self.speaker_names else [])
+        want = (name or "").strip()
+        if not want:
+            return None
+        for n in names:
+            if n == want:
+                return n
+        for n in names:
+            if n.lower() == want.lower():
+                return n
+        return None
 
     async def _reply(self, interaction, message: str):
         """Answer only the person who ran the command."""
@@ -736,7 +837,7 @@ class DiscordRuntime:
         source = discord.FFmpegPCMAudio(io.BytesIO(wav), pipe=True, options="-loglevel quiet")
         # Everything goes out through the mixer so a cue can be added to the
         # stream mid-sentence without stopping it.
-        mixer = _Mixer(source)
+        mixer = _Mixer(source, max_voices=self.overlap_max)
         self._mixer = mixer
 
         def after(err):
@@ -759,6 +860,40 @@ class DiscordRuntime:
                 self.voice.stop()
             except Exception:
                 pass
+
+    def overlay(self, wav: bytes) -> str:
+        """Add a voice on top of whatever is playing, without stopping it.
+
+        -> "on" it is now mixed in, "full" too many already, "idle" nothing is
+        playing to talk over, "offline" not in a channel.
+
+        Must be called on the event loop. There is no await between looking at
+        is_playing() and adding to the mixer, which is what makes "idle" a
+        truthful answer the caller can act on rather than a race.
+        """
+        if not (self.voice and self.voice.is_connected()):
+            return "offline"
+        mixer = self._mixer
+        if mixer is None or not self.voice.is_playing():
+            return "idle"
+        source = discord.FFmpegPCMAudio(io.BytesIO(wav), pipe=True,
+                                        options="-loglevel quiet")
+        if mixer.add_voice(source):
+            return "on"
+        # Cleaned up rather than dropped: FFmpegPCMAudio spawns the process in
+        # its constructor, so one that is never read is a stray ffmpeg.
+        try:
+            source.cleanup()
+        except Exception:
+            pass
+        return "full"
+
+    def talking(self) -> int:
+        """How many voices are audible right now, base included."""
+        if not (self.voice and self.voice.is_playing()):
+            return 0
+        mixer = self._mixer
+        return 1 + (mixer.voices() if mixer is not None else 0)
 
     def play_cue(self, pcm: bytes) -> bool:
         """Sound a short cue without interrupting speech. -> was it played.

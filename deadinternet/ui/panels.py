@@ -661,6 +661,18 @@ def build_behaviour(app):
 
     gr.Markdown("### Connection and interruption")
     with gr.Row():
+        m_overlap = gr.Checkbox(
+            value=state.settings.sayas_overlap,
+            label="Let /sayas talk over whatever is playing",
+            info="Spamming the command puts several voices on the channel at "
+                 "once instead of queueing them. Only /sayas - the Say box and "
+                 "the microphone stay strictly in order.")
+        m_overlap_max = gr.Slider(
+            1, 6, value=state.settings.sayas_overlap_max, step=1,
+            label="Voices at once",
+            info="Counting whoever was already talking. Past three or so it "
+                 "stops being an argument and becomes noise.")
+    with gr.Row():
         m_barge = gr.Checkbox(
             value=state.settings.barge_in,
             label="Interrupt the current line when someone types",
@@ -752,6 +764,8 @@ def build_behaviour(app):
         m_music_list=m_music_list,
         m_music_clear=m_music_clear,
         m_barge=m_barge,
+        m_overlap=m_overlap,
+        m_overlap_max=m_overlap_max,
         m_ack=m_ack,
         m_queue_max=m_queue_max,
         m_rejoin=m_rejoin,

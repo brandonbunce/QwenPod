@@ -384,6 +384,14 @@ class Settings:
         "We'll move on to the next topic shortly. First, our sponsor.\n"
         "Okay, we'll leave that there. A quick word from the people paying for this."
     )
+    # Let /sayas lines land on top of whatever is already talking instead of
+    # queueing behind it. Scoped to the slash command on purpose: the Run tab's
+    # Say box and the microphone stay strictly in order, because the recorder
+    # cuts one clip per sentence and overlapping sentences are not a sentence.
+    sayas_overlap: bool = True
+    # How many may pile on at once. Past three or so it stops being an argument
+    # and becomes noise nobody can pick a word out of.
+    sayas_overlap_max: int = 3
     barge_in: bool = True
     # How many unanswered messages to hold. Everything past this is refused
     # rather than silently replacing something already waiting, which is what

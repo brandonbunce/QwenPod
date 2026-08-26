@@ -125,6 +125,9 @@ class Director:
         self._switch_now = False
         # A topic typed by hand, used in place of the next pin exactly once.
         self._manual_next: Optional[str] = None
+        # In-flight /sayas lines being spoken over the top of something else.
+        self._over_tasks: set = set()
+        self.manual_debug = {"overlaid": 0, "refused": 0, "last_overlay": ""}
         # Web search round-robin: which subject is next, and the unused
         # results already fetched for each subject.
         self._web_subject_idx = 0
@@ -962,18 +965,54 @@ class Director:
         return turn
 
     # ---- manual mode ------------------------------------------------------
-    def say_now(self, speaker_name: str, text: str):
+    def say_now(self, speaker_name: str, text: str, overlap: bool = False):
         """Queue an explicit line. Works in any mode; in manual mode it is
-        the only thing that speaks."""
+        the only thing that speaks.
+
+        overlap=True asks for the line to be layered over whatever is already
+        talking rather than waiting its turn. Only /sayas passes it: the Run
+        tab's Say box and the microphone must stay strictly in order, because
+        the recorder cuts one clip per sentence and sentences spoken on top of
+        each other are not a sentence.
+        """
         if not self.runtime.loop:
             raise RuntimeError("Discord runtime not started - press Connect bot")
+        if overlap and self.state.settings.sayas_overlap:
+            # Deliberately *not* through _manual_q. The turn loop pops that one
+            # item at a time and awaits playback, so a queued line cannot start
+            # before the one ahead of it has finished -- which is exactly the
+            # serialisation being asked to go away here.
+            asyncio.run_coroutine_threadsafe(
+                self._say_over(speaker_name, text), self.runtime.loop)
+            return
         asyncio.run_coroutine_threadsafe(
             self._manual_q.put((speaker_name, text)), self.runtime.loop
         ).result(10)
 
-    async def _handle_manual(self, name: str, text: str):
+    async def _say_over(self, name: str, text: str):
+        """One line spoken on top of whatever else is going on.
+
+        Runs as its own task alongside the turn loop. Bounded by
+        sayas_overlap_max and refused past it: the cap is applied here, before
+        the line is synthesised, so spam costs nothing rather than queueing up
+        tts-server work for audio that could never be mixed in anyway.
+        """
+        cap = max(1, int(self.state.settings.sayas_overlap_max))
+        if len(self._over_tasks) >= cap:
+            self.manual_debug["refused"] += 1
+            self.log(f"[sayas] too many at once - dropped {name}: {text[:40]}")
+            return
+        task = asyncio.current_task()
+        self._over_tasks.add(task)
+        try:
+            await self._handle_manual(name, text, over=True)
+        finally:
+            self._over_tasks.discard(task)
+
+    async def _handle_manual(self, name: str, text: str, over: bool = False):
         speaker = self.state.get(name)
         if not speaker:
+            self.log(f"[director] no voice called {name} - nothing said")
             return
         loop = asyncio.get_running_loop()
         try:
@@ -982,6 +1021,30 @@ class Director:
             self.log(f"[director] manual tts failed: {e}")
             return
         self.state.add_turn(Turn(speaker=name, text=text))
+        if over:
+            # Levelled and truncated here the way _speak would, because the
+            # mixer takes the bytes as they are and nothing downstream will.
+            # Kept separate from `wav` so the "idle" fallthrough below hands
+            # _speak the untouched clip rather than a twice-processed one.
+            s = self.state.settings
+            mix = wav
+            if s.speech_limit_enabled:
+                mix, _ = truncate_wav(mix, s.max_speech_seconds)
+            if s.normalize_audio:
+                mix, _ = normalize_wav(mix, s.target_dbfs)
+            state = self.runtime.overlay(mix)
+            self.manual_debug["last_overlay"] = state
+            if state == "on":
+                self.manual_debug["overlaid"] += 1
+                return
+            if state == "full":
+                self.manual_debug["refused"] += 1
+                self.log(f"[sayas] mixer full - dropped {name}: {text[:40]}")
+                return
+            # "idle": nothing to talk over, so this is just a line. Falling
+            # through to _speak is safe from here without a re-check --
+            # overlay() and play_wav() both run on this loop and there is no
+            # await between them, so nothing can start playing in the gap.
         await self._speak(name, text, wav)
 
     # ---- main loop --------------------------------------------------------

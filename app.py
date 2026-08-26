@@ -307,8 +307,16 @@ class DeadInternetApp:
         self.runtime.on_text = self.director.push_user_text
         # /sayas needs the roster to offer and somewhere to send the line.
         self.runtime.on_say = self.director.say_now
-        self.runtime.speaker_names = lambda: [
-            sp.name for sp in self.state.active()]
+        # Everyone with a clip, NOT state.active(). "Enabled" means eligible to
+        # take turns on its own; say_now is an explicit override that works in
+        # any mode and jumps the queue, and _handle_manual looks the speaker up
+        # with state.get() without ever consulting the flag. Filtering by it
+        # made /sayas useless in exactly the mode it is most wanted: manual is
+        # where you untick everyone so the cast stops talking by itself, and
+        # the whole roster vanished from the command with it. try_start()
+        # already draws this same distinction.
+        self.runtime.speaker_names = self.sayas_roster
+        self.sync_voice_settings()
 
         if not self.runtime.start():
             err = self.runtime.error or "failed to connect (check the token and intents)"
@@ -319,6 +327,18 @@ class DeadInternetApp:
         return True, (f"Connected as `{self.runtime.client.user}` - "
                       f"{len(self._channels)} voice channels, "
                       f"{len(self._text_channels)} text channels.")
+
+    def sayas_roster(self):
+        """Who /sayas offers, in the order it offers them.
+
+        Discord caps an autocomplete at 25 and this roster is larger, so with
+        an empty query some speakers are simply not on the list until you type
+        a letter. Enabled first means the ones currently in the show are the
+        ones guaranteed to be visible; the rest are a keystroke away.
+        """
+        roster = self.state.restorable()
+        return ([sp.name for sp in roster if sp.enabled]
+                + [sp.name for sp in roster if not sp.enabled])
 
     def resync_voices(self):
         """Re-upload the roster to tts-server. Returns (ok, message).
@@ -447,6 +467,8 @@ class DeadInternetApp:
         """Push the connection-behaviour settings onto a live runtime."""
         if self.runtime:
             self.runtime.auto_rejoin = bool(self.state.settings.auto_rejoin)
+            self.runtime.overlap_max = max(
+                1, int(self.state.settings.sayas_overlap_max))
 
     # ---- persona mining ------------------------------------------------------
     def persona_progress(self, handle):

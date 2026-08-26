@@ -314,9 +314,38 @@ acknowledgements.
   would hear.
 
 `speaker` uses **autocomplete, not a choice list**. Discord caps an option at 25
-static choices and the roster is already 27 — a static enumeration cannot
-represent it at all, and would go stale the moment a speaker is added.
-Autocomplete is re-evaluated per keystroke and filters as you type.
+static choices and the roster is already larger than that — a static enumeration
+cannot represent it at all, and would go stale the moment a speaker is added.
+Autocomplete is re-evaluated per keystroke and filters as you type. It offers
+**everyone with a clip, not just the enabled cast**: `enabled` means eligible to
+take turns on its own, while `/sayas` is an explicit override that works in any
+mode, and the code that speaks the line never consults the flag. Enabled
+speakers are listed first, because 25 of a longer roster is all Discord will
+show against an empty query — the rest are one keystroke away.
+
+Autocomplete suggests but does not constrain: Discord submits whatever was
+typed. An unrecognised name is refused with a reason rather than accepted and
+dropped, which is what used to happen — the reply said the line was queued and
+then nothing was said.
+
+**Spamming `/sayas` makes them talk over each other.** Lines from the command
+are mixed on top of whatever is already playing instead of queueing behind it,
+up to *Voices at once* (default 3, counting whoever was already speaking). Past
+that the extra lines are dropped with a log line rather than cutting anyone off,
+and the cap is checked *before* synthesis so spam costs no tts-server work.
+
+This is scoped to the slash command deliberately. The Run tab's **Say** box and
+the microphone stay strictly in order: the recorder cuts one clip per sentence,
+and sentences spoken on top of each other are not a sentence. It also bypasses
+the manual queue entirely — the turn loop pops that one item at a time and
+awaits playback, so anything going through it is serialised by construction.
+
+A voice client plays exactly one source, so this is the same mechanism as the
+message cue: extra speech is summed into the outgoing 20ms frames rather than
+played. Overlaid voices come in at 0.78 so the original line stays followable
+and each addition reads as someone cutting in rather than as the mix getting
+louder — three real voices measured a peak of 20388 of 32767 with nothing
+clipped.
 
 ### The message queue
 

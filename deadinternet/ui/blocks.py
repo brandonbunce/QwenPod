@@ -202,6 +202,8 @@ def build(app):
                 u.m_music_list = behaviour.m_music_list
                 u.m_music_clear = behaviour.m_music_clear
                 u.m_barge = behaviour.m_barge
+                u.m_overlap = behaviour.m_overlap
+                u.m_overlap_max = behaviour.m_overlap_max
                 u.m_ack = behaviour.m_ack
                 u.m_queue_max = behaviour.m_queue_max
                 u.m_rejoin = behaviour.m_rejoin
@@ -375,6 +377,11 @@ def build(app):
         u.m_music_clear.click(bound(t_behaviour.clear_music, app), None,
                               [u.m_music_list, u.sb_action])
         bind(u.m_barge, "barge_in", "interrupt on message", bool)
+        bind(u.m_overlap, "sayas_overlap", "/sayas overlap", bool)
+        # after= is load-bearing: the cap lives on the runtime, and this is
+        # what pushes a change onto a bot that is already connected.
+        bind(u.m_overlap_max, "sayas_overlap_max", "voices at once", int,
+             "release", after=lambda: app.sync_voice_settings())
         bind(u.m_ack, "ack_sound", "message cue", bool)
         bind(u.m_queue_max, "user_queue_max", "messages held at once",
              int, "release")

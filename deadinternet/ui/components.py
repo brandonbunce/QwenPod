@@ -165,6 +165,8 @@ class BehaviourPanel:
     m_music_list: Any
     m_music_clear: Any
     m_barge: Any
+    m_overlap: Any
+    m_overlap_max: Any
     m_ack: Any
     m_queue_max: Any
     m_rejoin: Any
