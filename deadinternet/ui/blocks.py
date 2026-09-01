@@ -174,6 +174,8 @@ def build(app):
                 u.l_sink = outputs.l_sink
                 u.l_refresh = outputs.l_refresh
                 u.l_status = outputs.l_status
+                u.l_stream = outputs.l_stream
+                u.l_stream_voice = outputs.l_stream_voice
             with gr.Tab("Behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
@@ -275,6 +277,10 @@ def build(app):
         u.l_refresh.click(bound(t_local.refresh_sinks, app), None,
                           [u.l_sink, u.sb_action])
         u.l_sink.change(bound(t_local.set_sink, app), u.l_sink, u.sb_action)
+        u.l_stream.change(bound(t_local.set_stream, app),
+                          [u.l_stream, u.l_stream_voice], u.sb_action)
+        u.l_stream_voice.change(bound(t_local.set_stream, app),
+                                [u.l_stream, u.l_stream_voice], u.sb_action)
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,

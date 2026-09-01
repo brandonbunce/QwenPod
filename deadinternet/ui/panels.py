@@ -118,6 +118,18 @@ def build_outputs(app):
                 label="Output device", scale=3, container=True)
             l_refresh = gr.Button("Refresh devices", scale=1)
             l_stop = gr.Button("Stop", scale=1)
+        with gr.Row():
+            l_stream = gr.Checkbox(
+                value=app.state.settings.stream_tts, scale=1,
+                label="Stream one voice",
+                info="Speaks as the audio is generated rather than rendering "
+                     "the clip first - 0.06s to the first sample against "
+                     "2.21s. One voice at a time, and it holds a second copy "
+                     "of the model (~3.4 GB).")
+            l_stream_voice = gr.Dropdown(
+                choices=[sp.name for sp in app.state.restorable()],
+                value=app.state.settings.stream_tts_voice or None,
+                label="Streamed voice", scale=2, container=True)
         l_status = gr.Markdown(LOCAL_HINT)
     return OutputsPanel(
         d_connect=d_connect,
@@ -129,6 +141,8 @@ def build_outputs(app):
         l_sink=l_sink,
         l_refresh=l_refresh,
         l_status=l_status,
+        l_stream=l_stream,
+        l_stream_voice=l_stream_voice,
     )
 
 

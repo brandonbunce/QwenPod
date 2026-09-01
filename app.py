@@ -452,7 +452,7 @@ class DeadInternetApp:
         if self.runtime is not None:
             self.stop_output()
 
-        runtime = LocalRuntime(sink=s.local_sink, log=self.log)
+        runtime = LocalRuntime(sink=s.local_sink, log=self.log, settings=s)
         self._attach(runtime)
         if not runtime.start():
             err = runtime.error or "could not start local audio"
@@ -461,6 +461,12 @@ class DeadInternetApp:
             return False, f"**Local output failed** - {err}"
         s.output = OUTPUT_LOCAL
         self.state.save()
+        if s.stream_tts and s.stream_tts_voice:
+            voice = self.state.get(s.stream_tts_voice)
+            if voice is None:
+                self.log(f"[stream] no speaker called {s.stream_tts_voice}")
+            elif not runtime.open_stream(voice):
+                self.log("[stream] falling back to buffered synthesis")
         return True, (f"Local output ready, playing to "
                       f"**{s.local_sink or 'system default'}**. "
                       "Press Start on the Run tab.")

@@ -470,6 +470,48 @@ them with `pactl unload-module <id>`, newest first.
 **One output at a time.** The director holds a single runtime, so starting one
 stops the other, and both buttons say so.
 
+#### Streaming one voice
+
+*Stream one voice* speaks **as the audio is generated** instead of rendering
+the clip and then playing it. The difference is not subtle. For a nine-second
+line, measured:
+
+| | time to the first sample |
+| --- | --- |
+| buffered (`/v1/audio/speech`) | **2.21 s** |
+| streaming (`qwen-tts --stream-by-line --codec-fused`) | **0.06 s** |
+
+The whole line finishes rendering in 1.57 s either way; what changes is that
+you stop waiting for it. That is the difference between a voice changer and a
+walkie-talkie.
+
+The catch is that **a reference clip is fixed at process start**, so one
+process speaks one voice. That rules it out for the 33-speaker show and makes
+it exactly right for the microphone, where you have picked a character and are
+talking as them. It also holds a second copy of the model (~3.4 GB), so it is
+off by default. Anything spoken by a *different* speaker is put back on the
+queue and rendered the buffered way, in order.
+
+Two details worth knowing:
+
+- **The HTTP server cannot do this** -- it sets `Content-Length` and hands over
+  the whole clip at once, confirmed by measurement, and `tools/tts-server.cpp`
+  is upstream. The streaming path shells out to the `qwen-tts` CLI instead and
+  pipes it at `paplay`, which is only natural because the local output is
+  already a sound device.
+- **There is no loudness normalisation on this path.** `normalize_wav` needs
+  the whole clip, and not having the whole clip is the point. Measured, the raw
+  stream lands at 0.0871 RMS against the buffered path's -20 dBFS target of
+  0.1000, so a fixed 1.15x trim covers it -- a constant, because normalising
+  each chunk separately would pump the level inside a single sentence.
+
+`--stream-by-line` emits **one 44-byte WAV header per line**, so the headers are
+stripped at each boundary and raw PCM is handed to a single long-lived
+`paplay`; piping the stream in whole would feed it a second header mid-audio.
+Backpressure is free and load-bearing: generation runs several times faster
+than playback, so the pipe fills, the pump blocks, and the sound card paces
+everything.
+
 Two things are markedly easier here than over Discord, and one is lost:
 
 - **Overlapping voices are free.** A voice client plays exactly one source,

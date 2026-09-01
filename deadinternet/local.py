@@ -34,6 +34,8 @@ import subprocess
 import threading
 from typing import List, Optional
 
+from .streamtts import StreamingVoice
+
 # paplay resamples and converts for us, so the 24 kHz mono WAV tts-server
 # returns needs no preparation. Reading it on stdin avoids a temp file per
 # line.
@@ -85,9 +87,12 @@ class LocalRuntime:
 
     kind = "local"
 
-    def __init__(self, sink: str = "", log=print):
+    def __init__(self, sink: str = "", log=print, settings=None):
         self.sink = sink or ""
         self.log = log
+        # Needed for the streaming voice's model paths and gain; optional so a
+        # bare LocalRuntime is still constructible in a test.
+        self.settings = settings
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.ready = threading.Event()
@@ -102,6 +107,8 @@ class LocalRuntime:
         self.auto_rejoin = False
         self.target_channel_id = None
         self.client = None
+        # A resident single-voice streamer, when one is configured.
+        self.stream: Optional[StreamingVoice] = None
         self._procs: List[asyncio.subprocess.Process] = []
         self._current: Optional[asyncio.subprocess.Process] = None
         self._lock = threading.Lock()
@@ -145,6 +152,52 @@ class LocalRuntime:
         self.log(f"[local] output ready -> {self.sink or 'system default'}")
         return True
 
+    def open_stream(self, voice) -> bool:
+        """Hold a streaming synthesiser open for one speaker. -> ready.
+
+        Rebuilt rather than mutated when the voice changes: the reference clip
+        is a process argument, so a different speaker is a different process.
+        """
+        s = self.settings
+        if self.stream is not None and self.stream.voice == voice.name and self.stream.alive():
+            return True
+        self.close_stream()
+        if not voice.ref_wav:
+            self.log(f"[stream] {voice.name} has no reference clip")
+            return False
+        self.stream = StreamingVoice(
+            binary=self._abs(s.tts_cli_binary), model=self._abs(s.tts_model),
+            codec=self._abs(s.tts_codec), ref_wav=voice.ref_wav,
+            voice=voice.name, sink=self.sink, gain=s.stream_tts_gain,
+            log=self.log)
+        if not self.stream.start():
+            self.stream = None
+            return False
+        self.log(f"[stream] holding {voice.name} open on {self.sink or 'system default'}")
+        return True
+
+    def close_stream(self):
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            stream.stop()
+
+    def stream_say(self, text: str):
+        """Speak through the resident streamer. -> seconds of audio, or None.
+
+        Runs on an executor thread: say() blocks until the line has finished
+        generating, and generation is several times faster than playback, so
+        this returns while the audio is still going out.
+        """
+        if self.stream is None or not self.stream.alive():
+            return None
+        return self.stream.say(text)
+
+    @staticmethod
+    def _abs(path):
+        import os
+        from .config import ROOT
+        return path if os.path.isabs(path) else os.path.join(ROOT, path)
+
     def stop(self):
         """Stop playing and unwind the loop.
 
@@ -153,6 +206,7 @@ class LocalRuntime:
         turn produces "Task was destroyed but it is pending" and, worse, leaves
         whatever that turn was holding un-run.
         """
+        self.close_stream()
         self.interrupt()
         loop, self.loop = self.loop, None
         if loop and loop.is_running():

@@ -324,6 +324,16 @@ class Settings:
     output: str = OUTPUT_DISCORD
     # Which sink to play into. Empty is the system default.
     local_sink: str = ""
+    # Speak one chosen voice through a resident qwen-tts that emits audio as it
+    # decodes, instead of rendering the whole clip first. Measured on a
+    # nine-second line: 0.06s to the first sample against 2.21s buffered. One
+    # process is one voice -- the reference clip is fixed at startup -- so this
+    # is for the microphone, not for the 33-speaker show. Off by default: it
+    # holds a second copy of the model, about 3.4 GB.
+    stream_tts: bool = False
+    stream_tts_voice: str = ""
+    stream_tts_gain: float = 1.15
+    tts_cli_binary: str = "build/qwen-tts"
     tts_binary: str = "build/tts-server"
     tts_model: str = "models/qwen-talker-1.7b-base-Q8_0.gguf"
     tts_codec: str = "models/qwen-tokenizer-12hz-F32.gguf"

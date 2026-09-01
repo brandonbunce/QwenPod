@@ -1016,6 +1016,40 @@ class Director:
         finally:
             self._over_tasks.discard(task)
 
+    async def _try_stream(self, item):
+        """Speak one line through the resident streamer. -> did it.
+
+        Returns False for anything it does not handle -- no streamer, a
+        different speaker, a failure -- and the buffered path takes over.
+        """
+        stream = getattr(self.runtime, "stream", None)
+        if stream is None or not stream.alive():
+            return False
+        if item is None:
+            try:
+                item = self._manual_q.get_nowait()
+            except asyncio.QueueEmpty:
+                return False
+        name, text = item
+        if name != stream.voice:
+            # Not ours: put it back so the normal path speaks it, in order.
+            self._manual_q.put_nowait(item)
+            return False
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        seconds = await loop.run_in_executor(
+            None, lambda: self.runtime.stream_say(text))
+        if seconds is None:
+            self._manual_q.put_nowait(item)
+            return False
+        self._last_speaker = name
+        self.state.add_turn(Turn(speaker=name, text=text))
+        # say() returns when generation finishes, which is well before the
+        # audio has finished leaving the sound card. Wait out the difference so
+        # the next line does not land on top of this one.
+        await asyncio.sleep(max(0.0, seconds - (loop.time() - started)))
+        return True
+
     def _synth_task(self, name: str, text: str):
         """Start synthesising a line without waiting for it. -> task or None."""
         speaker = self.state.get(name)
@@ -1047,6 +1081,15 @@ class Director:
         One line of lookahead, not a drain: the loop still gets to come round
         and do everything else between clips.
         """
+        # The streaming voice, when this line is for the speaker it holds
+        # open. It starts talking in ~0.06s instead of after the whole clip is
+        # rendered, so it deliberately jumps ahead of the lookahead below --
+        # there is nothing to prefetch when there is nothing to wait for.
+        if self._manual_ready is None:
+            spoken = await self._try_stream(item)
+            if spoken:
+                return
+
         ready, self._manual_ready = self._manual_ready, None
         if ready is None:
             if item is None:

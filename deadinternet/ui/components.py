@@ -41,6 +41,8 @@ class OutputsPanel:
     l_sink: Any
     l_refresh: Any
     l_status: Any
+    l_stream: Any
+    l_stream_voice: Any
 
 
 @dataclass(frozen=True)

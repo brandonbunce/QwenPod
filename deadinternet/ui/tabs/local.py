@@ -43,3 +43,29 @@ def set_sink(app, name):
         ok, msg = app.start_local()
         return note(msg) if ok else warn(msg)
     return note(f"Output device set to **{label}**. Press Start local output.")
+
+
+def set_stream(app, enabled, voice):
+    """Turn the streaming voice on or off, or point it at someone else.
+
+    Applied immediately when the local output is already running, because the
+    whole point is a voice you are about to talk through.
+    """
+    s = app.state.settings
+    s.stream_tts = bool(enabled)
+    s.stream_tts_voice = (voice or "").strip()
+    app.state.save()
+    rt = app.runtime
+    if getattr(rt, "kind", "") != "local":
+        return note("Saved. It applies when the local output starts.")
+    if not s.stream_tts or not s.stream_tts_voice:
+        rt.close_stream()
+        return note("Streaming voice off - back to buffered synthesis.")
+    sp = app.state.get(s.stream_tts_voice)
+    if sp is None:
+        return warn(f"No speaker called {s.stream_tts_voice}.")
+    if not rt.open_stream(sp):
+        return warn(f"Could not open a streaming voice for {sp.name} - "
+                    "see the log. Buffered synthesis still works.")
+    app.events.add(VOICE, f"streaming voice: {sp.name}")
+    return note(f"Streaming as **{sp.name}**. First line loads the model.")
