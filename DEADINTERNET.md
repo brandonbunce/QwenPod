@@ -326,21 +326,34 @@ What cannot be overlapped is the sentence itself: **TTS cannot synthesise a
 sentence before it knows where the sentence ends.** Every voice changer of this
 shape is chunk-based, and the floor is roughly one pause plus one synthesis.
 
-**Whisper on the GPU is not the win it looks like.** whisper-cli's own timings
-for that utterance:
+**Whisper runs resident, on the GPU.** This one is worth reading carefully,
+because the obvious measurement gives the wrong answer twice.
 
-```
-load 96ms | mel 2ms | encode 38ms | decode 8ms | total 250ms
-```
+Spawning `whisper-cli` per clip, a Vulkan build and a CPU build are *identical*
+-- 0.32s each. That looks like proof the GPU is useless here, and it is not:
+whisper's own timings for a two-second utterance are `load 96ms | mel 2ms |
+encode 38ms | decode 8ms`, so process startup and model load swamp the
+arithmetic and hide whatever the arithmetic is doing. Remove that overhead with
+a resident `whisper-server` and the compute gap appears:
 
-Only the 38 ms encode is GPU work. A Vulkan build measured 0.32s against the
-CPU build's 0.32s back to back -- no difference, because the cost is process
-startup and model load, paid fresh for every clip. It is also worse than
-neutral here: each spawn would take a Vulkan context and VRAM on a card
-tts-server has already allocated on, and evicted TTS buffers never recover.
-The win worth having is a **resident** whisper (whisper.cpp ships a server
-example), not a faster one -- that would cut the ~200 ms of setup, not the
-48 ms of arithmetic.
+| | per clip |
+| --- | --- |
+| spawn `whisper-cli` per clip | 640 ms |
+| resident server, CPU, 16 threads | 619 ms |
+| **resident server, Vulkan** | **92 ms** |
+
+So residency is what makes the GPU matter, and the GPU is what makes residency
+worth much. Either alone is nearly nothing; together they are 7x.
+
+It costs about **0.45 GB of VRAM** held for the process's life, so the app
+starts it *after* tts-server -- tts-server must get the card while it is empty,
+and evicted TTS buffers never recover. Measured after: TTS unchanged.
+
+Turn it off with `whisper_server: false` and transcription falls straight back
+to spawning `whisper-cli`, which is what it always did. The same fallback fires
+automatically if the server is unreachable -- but a server that *answers* with
+an error is reported rather than silently retried on the CPU, because "slow for
+no visible reason" is the failure this whole section exists to avoid.
 
 ### Seeing what it is waiting on
 

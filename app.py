@@ -69,6 +69,7 @@ class DeadInternetApp:
         self.tts.pipeline = self.pipeline
         self.whisper = Whisper(ROOT, s.whisper_binary, s.whisper_model, s.whisper_lang)
         self.whisper.pipeline = self.pipeline
+        self._whisper_proc = None
         # Kept alongside the active client so the UI can list Ollama models
         # even while OpenAI is selected.
         self.ollama = OllamaClient(s.ollama_url, s.ollama_model)
@@ -184,6 +185,78 @@ class DeadInternetApp:
             time.sleep(1.0)
         return False, f"tts-server did not answer within {TTS_BOOT_TIMEOUT}s - see {log_path}"
 
+    # ---- whisper server ----------------------------------------------------
+    def whisper_alive(self, timeout=1.5) -> bool:
+        s = self.state.settings
+        if not s.whisper_server_url:
+            return False
+        try:
+            r = self.http_get(s.whisper_server_url.rstrip("/") + "/", timeout)
+            return r is not None
+        except Exception:
+            return False
+
+    def start_whisper_server(self):
+        """Launch whisper-server if it is wanted and not already up.
+
+        Non-fatal throughout: transcription falls back to spawning whisper-cli
+        per clip, which is what it always did. A microphone that is slower than
+        it could be beats one that reports an error.
+        """
+        s = self.state.settings
+        if not s.whisper_server:
+            self.whisper.server_url = ""
+            return False, "resident whisper is off"
+        if self.whisper_alive():
+            self.whisper.server_url = s.whisper_server_url
+            return True, "whisper-server already running."
+
+        binary = os.path.join(ROOT, s.whisper_server_binary)
+        model = os.path.join(ROOT, s.whisper_model)
+        for label, path in (("binary", binary), ("model", model)):
+            if not os.path.exists(path):
+                self.whisper.server_url = ""
+                return False, (f"no resident whisper - {label} not found at "
+                               f"{path}; run ./setup-whisper.sh")
+
+        port = s.whisper_server_url.rsplit(":", 1)[-1]
+        cmd = [binary, "-m", model, "--host", "127.0.0.1", "--port", port,
+               "-l", s.whisper_lang, "-t", str(self.whisper.threads)]
+        try:
+            logfile = open(os.path.join(ROOT, "whisper-server.log"), "ab")
+            self._whisper_proc = subprocess.Popen(
+                cmd, cwd=ROOT, stdout=logfile, stderr=logfile,
+                start_new_session=True)
+        except OSError as e:
+            self.whisper.server_url = ""
+            return False, f"could not start whisper-server - {e}"
+
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if self.whisper_alive():
+                self.whisper.server_url = s.whisper_server_url
+                self.log(f"[whisper] resident on {s.whisper_server_url}")
+                return True, "whisper-server up."
+            if self._whisper_proc.poll() is not None:
+                self.whisper.server_url = ""
+                return False, "whisper-server exited - see whisper-server.log"
+            time.sleep(0.5)
+        self.whisper.server_url = ""
+        return False, "whisper-server did not answer in 60s"
+
+    @staticmethod
+    def http_get(url, timeout):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                r.read(1)
+                return r
+        except urllib.error.HTTPError:
+            # Answering at all is what "alive" means; whisper-server has no
+            # health endpoint and 404s the root.
+            return True
+        except (urllib.error.URLError, OSError):
+            return None
+
     def boot_tts(self, autostart=True):
         """Get tts-server running and the roster registered on it.
 
@@ -239,6 +312,14 @@ class DeadInternetApp:
             self.boot_tts(autostart)
         except Exception as e:
             self.log(f"[boot] tts-server startup failed: {e}")
+        # After tts-server, deliberately: it is the one that must get the card
+        # while it is empty, and whisper's ~0.45 GB is small enough to land
+        # afterwards without evicting anything.
+        try:
+            ok, msg = self.start_whisper_server()
+            self.log(f"[boot] {msg}")
+        except Exception as e:
+            self.log(f"[boot] whisper-server startup failed: {e}")
 
     # ---- logging ---------------------------------------------------------
     def log(self, msg):

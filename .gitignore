@@ -35,6 +35,7 @@ music/
 # that must never reach a public fork.
 app.log*
 tts-server.log*
+whisper-server.log*
 
 # Local environment
 .venv-app/

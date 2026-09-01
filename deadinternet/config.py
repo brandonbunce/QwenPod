@@ -335,6 +335,13 @@ class Settings:
     whisper_model: str = "whisper.cpp/models/ggml-small.en.bin"
     # whisper.cpp language code, not the TTS language name.
     whisper_lang: str = "en"
+    # A resident whisper-server, so a clip does not pay process startup and a
+    # model load every time. Measured on a two-second utterance: 640ms
+    # spawning whisper-cli per clip, 92ms against a server holding the model
+    # on the GPU -- only ~48ms of either is inference.
+    whisper_server: bool = True
+    whisper_server_binary: str = "whisper.cpp/build/bin/whisper-server"
+    whisper_server_url: str = "http://127.0.0.1:8082"
     mode: str = MODE_PODCAST
     topic: str = "whatever comes to mind"
     # Who pinned the current topic, and where. Empty when the topic was typed

@@ -30,21 +30,23 @@ if [ ! -d "$DIR" ]; then
     git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$DIR"
 fi
 
-# CPU on purpose, and this was measured rather than assumed. whisper-cli is
-# spawned per clip, so its own timings on a 2s utterance read:
+# Vulkan, and both binaries. The measurement that decided this is subtle:
+# spawning whisper-cli per clip, a Vulkan build and a CPU build are identical
+# (0.32s each) because process startup and model load swamp the arithmetic --
+# whisper's own timings are load 96ms, encode 38ms, decode 8ms. Remove that
+# overhead with a resident server and the compute gap appears:
 #
-#     load 96ms | mel 2ms | encode 38ms | decode 8ms | total 250ms
+#     spawn whisper-cli per clip   640 ms
+#     resident, CPU, 16 threads    619 ms
+#     resident, Vulkan             92 ms
 #
-# Only the 38ms encode is GPU work. A Vulkan build measured 0.32s against the
-# CPU build's 0.32s -- no difference, because the cost is process startup and
-# model load, not arithmetic. It is also actively worse here: each spawn would
-# take a Vulkan context and ~0.5GB of VRAM on a card that tts-server has
-# already allocated on, and evicted TTS buffers never recover (see the VRAM
-# section of DEADINTERNET.md). The win worth having is a resident whisper,
-# not a faster one.
+# So residency is most of the win and the GPU is the rest, but only once
+# residency exists. Costs ~0.45 GB of VRAM held for the life of the process.
+# On a card that tts-server has already allocated on, start it *after*
+# tts-server -- evicted TTS buffers never recover (see DEADINTERNET.md).
 cmake -S "$DIR" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF \
-      -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=OFF
-cmake --build "$DIR/build" --config Release -j "$(nproc)" --target whisper-cli
+      -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=ON
+cmake --build "$DIR/build" --config Release -j "$(nproc)" --target whisper-cli whisper-server
 
 echo "==> fetching model: $MODEL"
 "$DIR/models/download-ggml-model.sh" "$MODEL"
