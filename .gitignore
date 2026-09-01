@@ -46,3 +46,8 @@ tts-server.log
 
 # whisper.cpp checkout -- rebuilt by ./setup-whisper.sh, never committed
 whisper.cpp/
+
+# Side-by-side backend builds. buildcpu.sh and friends all `rm -rf build`, so
+# comparing backends means building somewhere else -- and the working build/
+# is the one the live server is running from.
+build-*/
