@@ -41,8 +41,8 @@ MIC_HTML = """
   <div class="qp-mic-row">
     <select id="qp-mic-dev" title="Which microphone to record from"></select>
     <select id="qp-mic-gap" title="How long a pause ends a sentence">
-      <option value="500">pause 0.5s</option>
-      <option value="800" selected>pause 0.8s</option>
+      <option value="500" selected>pause 0.5s</option>
+      <option value="800">pause 0.8s</option>
       <option value="1200">pause 1.2s</option>
       <option value="2000">pause 2.0s</option>
     </select>

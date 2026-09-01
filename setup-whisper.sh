@@ -30,9 +30,20 @@ if [ ! -d "$DIR" ]; then
     git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$DIR"
 fi
 
-echo "==> building (CPU)"
+# CPU on purpose, and this was measured rather than assumed. whisper-cli is
+# spawned per clip, so its own timings on a 2s utterance read:
+#
+#     load 96ms | mel 2ms | encode 38ms | decode 8ms | total 250ms
+#
+# Only the 38ms encode is GPU work. A Vulkan build measured 0.32s against the
+# CPU build's 0.32s -- no difference, because the cost is process startup and
+# model load, not arithmetic. It is also actively worse here: each spawn would
+# take a Vulkan context and ~0.5GB of VRAM on a card that tts-server has
+# already allocated on, and evicted TTS buffers never recover (see the VRAM
+# section of DEADINTERNET.md). The win worth having is a resident whisper,
+# not a faster one.
 cmake -S "$DIR" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF \
-      -DWHISPER_BUILD_EXAMPLES=ON
+      -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=OFF
 cmake --build "$DIR/build" --config Release -j "$(nproc)" --target whisper-cli
 
 echo "==> fetching model: $MODEL"

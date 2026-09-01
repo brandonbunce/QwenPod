@@ -301,6 +301,47 @@ every request. Off by default, and worth understanding before turning it on:
   session — the same way `OpenAIClient` learns its token parameter. An
   unreasoned rewrite is enormously better than none.
 
+### What "speak and hear it back" actually costs
+
+Measured, for a two-second utterance:
+
+| Stage | Cost |
+| --- | --- |
+| waiting to be sure you stopped | 500 ms (the pause setting) |
+| gradio round trip | ~100 ms |
+| whisper | ~250-700 ms, depending on load |
+| synthesis | ~450 ms |
+| playback starts | — |
+
+Two of those are already overlapped and one cannot be. **Transcription of the
+next clip runs while the current one plays** -- `say_from_mic` clears the
+hidden textbox as soon as it has queued the line, not after it has been
+spoken, so the recorder releases the following clip immediately.
+**Synthesis of the next line also runs during playback** -- one line of
+lookahead in `_speak_manual`, the same trick `_pre_task` has always done for
+podcast turns. Before that, a run of dictated sentences paid the full
+synthesis latency between every single one: talk, wait, hear it, talk, wait.
+
+What cannot be overlapped is the sentence itself: **TTS cannot synthesise a
+sentence before it knows where the sentence ends.** Every voice changer of this
+shape is chunk-based, and the floor is roughly one pause plus one synthesis.
+
+**Whisper on the GPU is not the win it looks like.** whisper-cli's own timings
+for that utterance:
+
+```
+load 96ms | mel 2ms | encode 38ms | decode 8ms | total 250ms
+```
+
+Only the 38 ms encode is GPU work. A Vulkan build measured 0.32s against the
+CPU build's 0.32s back to back -- no difference, because the cost is process
+startup and model load, paid fresh for every clip. It is also worse than
+neutral here: each spawn would take a Vulkan context and VRAM on a card
+tts-server has already allocated on, and evicted TTS buffers never recover.
+The win worth having is a **resident** whisper (whisper.cpp ships a server
+example), not a faster one -- that would cut the ~200 ms of setup, not the
+48 ms of arithmetic.
+
 ### Seeing what it is waiting on
 
 A **stage strip** sits above the transcript on **Run** and says what each part
@@ -518,7 +559,7 @@ down the same path.
 
 **You do not press Stop between sentences.** Recording is continuous, and a
 voice-activity detector cuts the take wherever you pause for longer than the
-gap chosen next to the device list (0.8s by default). Each piece is transcribed
+gap chosen next to the device list (0.5s by default). Each piece is transcribed
 and spoken while you carry on with the next one. Stop ends the session and
 sends whatever is left, if anything was said in it. A take with nothing in it is
 never sent, so a pause in the wrong place costs nothing.

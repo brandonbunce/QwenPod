@@ -130,6 +130,8 @@ class Director:
         # clients' own. Defaulted rather than required so a Director built in
         # a test needs no wiring.
         self.pipeline = NULL_PIPELINE
+        # A manual line already synthesised while the previous one played.
+        self._manual_ready = None
         # In-flight /sayas lines being spoken over the top of something else.
         self._over_tasks: set = set()
         self.manual_debug = {"overlaid": 0, "refused": 0, "last_overlay": ""}
@@ -1014,6 +1016,62 @@ class Director:
         finally:
             self._over_tasks.discard(task)
 
+    def _synth_task(self, name: str, text: str):
+        """Start synthesising a line without waiting for it. -> task or None."""
+        speaker = self.state.get(name)
+        if speaker is None:
+            self.log(f"[director] no voice called {name} - nothing said")
+            return None
+        loop = asyncio.get_running_loop()
+        return loop.run_in_executor(None, lambda: self._synth(text, speaker.name))
+
+    async def _collect(self, task):
+        if task is None:
+            return None
+        try:
+            return await task
+        except Exception as e:
+            self.log(f"[director] manual tts failed: {e}")
+            return None
+
+    async def _speak_manual(self, item=None):
+        """Speak one queued line, synthesising the next one while it plays.
+
+        The podcast path has always done this -- _pre_task produces the
+        following turn during playback, so back-to-back hosts have no gap. The
+        manual path never did, so a run of dictated sentences paid the full
+        synthesis latency between every single one of them: talk, wait, hear
+        it, talk, wait. Measured at roughly 450ms a line, which is most of
+        what makes the microphone feel like a walkie-talkie.
+
+        One line of lookahead, not a drain: the loop still gets to come round
+        and do everything else between clips.
+        """
+        ready, self._manual_ready = self._manual_ready, None
+        if ready is None:
+            if item is None:
+                try:
+                    item = self._manual_q.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+            name, text = item
+            ready = (name, text, await self._collect(self._synth_task(name, text)))
+        name, text, wav = ready
+
+        # Queued BEFORE playback starts -- that is the whole point. By the time
+        # this clip has finished, the next one is usually already rendered.
+        try:
+            nxt = self._manual_q.get_nowait()
+        except asyncio.QueueEmpty:
+            nxt = None
+        task = self._synth_task(*nxt) if nxt is not None else None
+
+        if wav is not None:
+            self.state.add_turn(Turn(speaker=name, text=text))
+            await self._speak(name, text, wav)
+        if nxt is not None:
+            self._manual_ready = (nxt[0], nxt[1], await self._collect(task))
+
     async def _handle_manual(self, name: str, text: str, over: bool = False):
         speaker = self.state.get(name)
         if not speaker:
@@ -1074,12 +1132,14 @@ class Director:
                 if self._drop_pending:
                     self._drop_pending = False
                     pending = None
+                    # Written against a context that no longer exists, same as
+                    # the podcast turn above it.
+                    self._manual_ready = None
 
                 # Manual lines always win, whatever the mode.
-                if not self._manual_q.empty():
-                    name, text = self._manual_q.get_nowait()
+                if self._manual_ready is not None or not self._manual_q.empty():
                     pending = None
-                    await self._handle_manual(name, text)
+                    await self._speak_manual()
                     continue
 
                 if mode == MODE_MANUAL:
@@ -1089,10 +1149,10 @@ class Director:
                     pending = None
                     self.status = "manual - waiting"
                     try:
-                        name, text = await asyncio.wait_for(self._manual_q.get(), timeout=0.5)
+                        item = await asyncio.wait_for(self._manual_q.get(), timeout=0.5)
                     except asyncio.TimeoutError:
                         continue
-                    await self._handle_manual(name, text)
+                    await self._speak_manual(item)
                     continue
 
                 if not self.runtime.connected():
