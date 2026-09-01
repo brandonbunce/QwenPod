@@ -134,6 +134,12 @@ def load_env() -> bool:
 MODE_PODCAST = "podcast"
 MODE_INTERACTIVE = "interactive"
 MODE_MANUAL = "manual"
+
+# Where the conversation is played. Two independent outputs, one at a time:
+# the director holds a single runtime and "which one" is this setting.
+OUTPUT_DISCORD = "discord"
+OUTPUT_LOCAL = "local"
+OUTPUTS = [OUTPUT_DISCORD, OUTPUT_LOCAL]
 MODES = [MODE_PODCAST, MODE_INTERACTIVE, MODE_MANUAL]
 
 DEFAULT_PERSONA = "You are {name}. Keep replies to one or two short sentences, conversational and spoken aloud."
@@ -312,6 +318,12 @@ class Settings:
     tts_url: str = "http://127.0.0.1:8080"
     # Used to relaunch tts-server from the UI when it is down. Paths are
     # relative to the repo root.
+    # Discord, or this machine's own sound card. Local needs no token, no
+    # bot and no voice channel; pair it with a null sink and a remapped source
+    # and the cast becomes a microphone every other app on the box can select.
+    output: str = OUTPUT_DISCORD
+    # Which sink to play into. Empty is the system default.
+    local_sink: str = ""
     tts_binary: str = "build/tts-server"
     tts_model: str = "models/qwen-talker-1.7b-base-Q8_0.gguf"
     tts_codec: str = "models/qwen-tokenizer-12hz-F32.gguf"

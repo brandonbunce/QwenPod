@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 
 from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
+                                 OUTPUT_DISCORD, OUTPUT_LOCAL,
                                  PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
                                  VRAM_WARN_FRACTION, State, gpu_busy_percent,
@@ -26,6 +27,8 @@ from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
                               OpenAIClient)
+from deadinternet.local import LocalRuntime, available as local_available
+from deadinternet.local import sinks as local_sinks
 from deadinternet.pipeline import Pipeline
 from deadinternet.rawfeed import NULL_TAP, RawFeed
 from deadinternet.transcribe import Whisper
@@ -296,6 +299,88 @@ class DeadInternetApp:
         src = ".env loaded" if self.env_file_found else "no .env file"
         return f"{src} | " + " | ".join(bits)
 
+    # ---- outputs -----------------------------------------------------------
+    def _attach(self, runtime):
+        """Hang a director and the shared services off a fresh runtime.
+
+        Both outputs go through here. Written out once because the last time
+        this was inline the local path would have been a copy that silently
+        lacked the pipeline, or /sayas, or the raw feed.
+        """
+        self.runtime = runtime
+        self.director = Director(self.state, self.tts, self.llm, runtime,
+                                 log=self.log)
+        self.director.pipeline = self.pipeline
+        runtime.pipeline = self.pipeline
+        runtime.on_text = self.director.push_user_text
+        # /sayas needs the roster to offer and somewhere to send the line.
+        runtime.on_say = self.director.say_now
+        # Everyone with a clip, NOT state.active(). "Enabled" means eligible to
+        # take turns on its own; say_now is an explicit override that works in
+        # any mode and jumps the queue, and _handle_manual looks the speaker up
+        # with state.get() without ever consulting the flag. Filtering by it
+        # made /sayas useless in exactly the mode it is most wanted: manual is
+        # where you untick everyone so the cast stops talking by itself, and
+        # the whole roster vanished from the command with it. try_start()
+        # already draws this same distinction.
+        runtime.speaker_names = self.sayas_roster
+        self.sync_voice_settings()
+        return runtime
+
+    def output_hint(self):
+        """What to press to make anything audible, for the current output."""
+        if self.state.settings.output == OUTPUT_LOCAL:
+            return "Start the local output on the **Outputs** tab first."
+        return "Connect the bot on the Outputs tab first."
+
+    def stop_output(self):
+        """Tear down whatever is playing, so the other output can take over."""
+        if self.director:
+            self.director.stop()
+        rt = self.runtime
+        if rt is not None and hasattr(rt, "stop"):
+            try:
+                rt.stop()
+            except Exception as e:
+                self.log(f"[output] could not stop cleanly: {e}")
+        self.runtime = None
+        self.director = None
+
+    def start_local(self):
+        """Bring up local audio output. -> (ok, message)."""
+        why = local_available()
+        if why:
+            return False, f"**Local output unavailable** - {why}"
+        s = self.state.settings
+        if (self.runtime is not None
+                and getattr(self.runtime, "kind", "") == "local"
+                and self.runtime.connected()):
+            if self.runtime.sink != (s.local_sink or ""):
+                # Changing device means a new paplay target; simplest correct
+                # thing is to rebuild rather than mutate one mid-clip.
+                self.stop_output()
+            else:
+                return True, f"Already playing to **{s.local_sink or 'system default'}**."
+        # One output at a time -- the director holds a single runtime.
+        if self.runtime is not None:
+            self.stop_output()
+
+        runtime = LocalRuntime(sink=s.local_sink, log=self.log)
+        self._attach(runtime)
+        if not runtime.start():
+            err = runtime.error or "could not start local audio"
+            self.runtime = None
+            self.director = None
+            return False, f"**Local output failed** - {err}"
+        s.output = OUTPUT_LOCAL
+        self.state.save()
+        return True, (f"Local output ready, playing to "
+                      f"**{s.local_sink or 'system default'}**. "
+                      "Press Start on the Run tab.")
+
+    def local_sink_choices(self):
+        return [(desc, name) for name, desc in local_sinks()]
+
     # ---- discord ----------------------------------------------------------
     def connect_discord(self):
         token = os.environ.get("DISCORD_TOKEN")
@@ -308,24 +393,13 @@ class DeadInternetApp:
 
         from deadinternet.bot import DiscordRuntime
 
-        self.runtime = DiscordRuntime(token, log=self.log,
-                                      on_topic=self.submit_crowd_topic)
-        self.director = Director(self.state, self.tts, self.llm, self.runtime, log=self.log)
-        self.director.pipeline = self.pipeline
-        self.runtime.pipeline = self.pipeline
-        self.runtime.on_text = self.director.push_user_text
-        # /sayas needs the roster to offer and somewhere to send the line.
-        self.runtime.on_say = self.director.say_now
-        # Everyone with a clip, NOT state.active(). "Enabled" means eligible to
-        # take turns on its own; say_now is an explicit override that works in
-        # any mode and jumps the queue, and _handle_manual looks the speaker up
-        # with state.get() without ever consulting the flag. Filtering by it
-        # made /sayas useless in exactly the mode it is most wanted: manual is
-        # where you untick everyone so the cast stops talking by itself, and
-        # the whole roster vanished from the command with it. try_start()
-        # already draws this same distinction.
-        self.runtime.speaker_names = self.sayas_roster
-        self.sync_voice_settings()
+        # Local output holds the single runtime slot, so it must go first.
+        if self.runtime is not None and getattr(self.runtime, "kind", "") != "discord":
+            self.stop_output()
+        self._attach(DiscordRuntime(token, log=self.log,
+                                    on_topic=self.submit_crowd_topic))
+        self.state.settings.output = OUTPUT_DISCORD
+        self.state.save()
 
         if not self.runtime.start():
             err = self.runtime.error or "failed to connect (check the token and intents)"
@@ -536,7 +610,7 @@ class DeadInternetApp:
         if self.director and self.director.running:
             return True, ""
         if not self.director:
-            return False, "Connect the bot on the Outputs tab first."
+            return False, self.output_hint()
 
         manual = self.state.settings.mode == "manual"
         roster = self.state.active() if not manual else self.state.restorable()
@@ -601,7 +675,14 @@ class DeadInternetApp:
         """The header strip. Bullet-separated, because pipes read as table
         syntax in markdown and the eye does not group on them."""
         bits = [f"mode: **{self.state.settings.mode}**"]
-        if self.runtime and self.runtime.connected():
+        local = getattr(self.runtime, "kind", "") == "local"
+        if local:
+            # "0 listening" is true of a sound card and says nothing. What
+            # matters locally is which device the audio is going to.
+            sink = self.runtime.sink or "system default"
+            bits.append(f"out: **{sink}**" if self.runtime.connected()
+                        else "out: local **stopped**")
+        elif self.runtime and self.runtime.connected():
             n = self.runtime.occupants()[0]
             bits.append(f"voice: **connected** ({n} listening)"
                         if n else "voice: **connected** (empty)")

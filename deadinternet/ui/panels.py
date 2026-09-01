@@ -21,6 +21,24 @@ from .selectors import NEW, roster_choices
 from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
 
+# The recipe for turning the local output into something other applications can
+# select as a microphone. Spelled out rather than linked: it is two commands,
+# and the whole point of the local output for most people.
+LOCAL_HINT = (
+    "To feed this into a game, voice client or anything else that records a "
+    "microphone, make a virtual one and point this at it:\n\n"
+    "```\n"
+    "pactl load-module module-null-sink sink_name=qwenpod \\\n"
+    "    sink_properties=device.description=QwenPod_Output\n"
+    "pactl load-module module-remap-source master=qwenpod.monitor \\\n"
+    "    source_name=qwenpod_mic "
+    "source_properties=device.description=QwenPod_Microphone\n"
+    "```\n\n"
+    "Then pick **qwenpod** above and **QwenPod_Microphone** as the input "
+    "device in the other application. Press *Refresh devices* after creating "
+    "it. The modules are not persistent - they go away on reboot."
+)
+
 
 def build_diagnostics(app):
     """Two columns: services and the event log on the left, the four subsystem
@@ -72,14 +90,15 @@ def build_diagnostics(app):
 
 
 def build_outputs(app):
-    """Where the audio goes. Discord is the only output today; this is its own
-    tab so adding another does not have to squeeze into the header."""
+    """Where the audio goes. Two outputs, one at a time -- the director holds
+    a single runtime, so starting one stops the other."""
     gr.Markdown(
-        "Where the conversation is played. The bot must be connected **and** in "
-        "a voice channel before anything is audible."
+        "Where the conversation is played. **One at a time:** starting one "
+        "output stops the other."
     )
     with gr.Group():
-        gr.Markdown("**Discord**")
+        gr.Markdown("**Discord** - the bot must be connected **and** in a "
+                    "voice channel before anything is audible.")
         with gr.Row():
             d_connect = gr.Button("Connect bot", variant="primary", scale=1)
             d_channel = gr.Dropdown(choices=[], label="Voice channel", scale=3,
@@ -87,11 +106,29 @@ def build_outputs(app):
             d_join = gr.Button("Join", scale=1)
             d_leave = gr.Button("Leave", scale=1)
     gr.Markdown(app.discord_hint())
+
+    with gr.Group():
+        gr.Markdown("**This machine** - plays out of a local sound device. No "
+                    "token, no bot, no voice channel.")
+        with gr.Row():
+            l_start = gr.Button("Start local output", variant="primary", scale=1)
+            l_sink = gr.Dropdown(
+                choices=app.local_sink_choices(),
+                value=app.state.settings.local_sink,
+                label="Output device", scale=3, container=True)
+            l_refresh = gr.Button("Refresh devices", scale=1)
+            l_stop = gr.Button("Stop", scale=1)
+        l_status = gr.Markdown(LOCAL_HINT)
     return OutputsPanel(
         d_connect=d_connect,
         d_channel=d_channel,
         d_join=d_join,
         d_leave=d_leave,
+        l_start=l_start,
+        l_stop=l_stop,
+        l_sink=l_sink,
+        l_refresh=l_refresh,
+        l_status=l_status,
     )
 
 

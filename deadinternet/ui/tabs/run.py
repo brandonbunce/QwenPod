@@ -65,6 +65,11 @@ def _speak_as(app, speaker, text):
     if not ok:
         return warn(msg)
     if not (app.runtime and app.runtime.connected()):
+        # Output-aware: telling someone to join a voice channel when they are
+        # playing to their own sound card is advice for a different program.
+        if getattr(app.runtime, "kind", "") == "local":
+            return warn("Local output is not running - start it on the "
+                        "**Outputs** tab.")
         return warn("Not in a voice channel - join one on the **Outputs** tab, "
                     "or nobody will hear it.")
     try:

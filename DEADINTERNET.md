@@ -243,7 +243,7 @@ one. Decorate `.action-line.block` and flatten `.action-line.prose`.
 | `Run` | driving it on the left — mode, Start/Stop, what's next, what's on now, and the four ways to change it; watching it on the right — who's talking, the raw model output, the transcript, and "say a line as" (typed **or** spoken) |
 | `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
 | `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
-| `Outputs` | where the audio goes. Connect the bot and join a voice channel here |
+| `Outputs` | where the audio goes — Discord, or this machine's own sound card. One at a time |
 | `Behaviour` | LLM backend, conversation tuning, spoken templates |
 | `Testing` | speak arbitrary text in a chosen voice, with the raw sampling knobs |
 | `Diagnostics` | service status and the event log on the left, subsystem reports on the right |
@@ -391,6 +391,46 @@ token would be unreadable — you would not be able to tell there were two.
   Gradio sets a textarea's `.value` property, which mutates no nodes, so the
   autoscroll `MutationObserver` used for the transcript never fires — the raw
   box is pinned by a 250ms interval instead.
+
+### Local output — speaking out of the sound card
+
+**Outputs** offers a second, completely independent output: play out of a local
+audio device instead of into a voice channel. No token, no bot, no server. The
+obvious use is a **virtual microphone**, which makes the cast an input device
+every game and voice client on the box can select:
+
+```bash
+pactl load-module module-null-sink sink_name=qwenpod sink_properties=device.description=QwenPod_Output
+```
+```bash
+pactl load-module module-remap-source master=qwenpod.monitor source_name=qwenpod_mic source_properties=device.description=QwenPod_Microphone
+```
+
+Pick **qwenpod** as the output device, press *Start local output*, and select
+**QwenPod_Microphone** as the input in the other application. Games that only
+use the system default need `pactl set-default-source qwenpod_mic`. Proton
+exposes PulseAudio sources through winepulse, so Steam titles see it like any
+native one. The modules are not persistent — they go away on reboot. Unload
+them with `pactl unload-module <id>`, newest first.
+
+**One output at a time.** The director holds a single runtime, so starting one
+stops the other, and both buttons say so.
+
+Two things are markedly easier here than over Discord, and one is lost:
+
+- **Overlapping voices are free.** A voice client plays exactly one source,
+  which is the whole reason `bot.py` sums extra speakers into the outgoing
+  frames by hand. PulseAudio mixes concurrent streams itself, so an overlaid
+  `/sayas` line is just a second `paplay`.
+- **Interrupting is killing a process.**
+- **Everything that genuinely *is* Discord goes away**: pinned messages as a
+  topic source, images, and people typing at the cast. Those return empty
+  rather than raising, so the same director code runs against either output —
+  but on local you are on web search, typed topics, and the Run tab.
+
+`humans_present()` is always true locally. *Pause while empty* exists because
+talking to an empty voice channel is pointless; a sound card has no such
+notion, and a local output that paused itself would never speak at all.
 
 ### Discord commands
 

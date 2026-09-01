@@ -223,6 +223,10 @@ def _clean_sample(text: str) -> str:
 
 
 class DiscordRuntime:
+    # Which output this is, for the places that have to tell them apart --
+    # the status line, and the messages that tell you what to connect.
+    kind = "discord"
+
     def __init__(self, token: str, on_text=None, on_topic=None, log=print):
         self.token = token
         self.log = log

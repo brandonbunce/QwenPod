@@ -34,6 +34,7 @@ from .selectors import speaker_names as _speaker_names
 from .selectors import voice_choices as _voice_choices
 from .tabs import behaviour as t_behaviour
 from .tabs import diagnostics as t_diagnostics
+from .tabs import local as t_local
 from .tabs import discord as t_discord
 from .tabs import run as t_run
 from .tabs import speakers as t_speakers
@@ -168,6 +169,11 @@ def build(app):
                 u.d_channel = outputs.d_channel
                 u.d_join = outputs.d_join
                 u.d_leave = outputs.d_leave
+                u.l_start = outputs.l_start
+                u.l_stop = outputs.l_stop
+                u.l_sink = outputs.l_sink
+                u.l_refresh = outputs.l_refresh
+                u.l_status = outputs.l_status
             with gr.Tab("Behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
@@ -261,6 +267,14 @@ def build(app):
         u.d_connect.click(bound(t_discord.connect_bot, app), None, [u.d_channel, u.m_rot_chans, u.sb_action])
         u.d_join.click(bound(t_discord.join_channel, app), u.d_channel, u.sb_action)
         u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
+
+        # Local output. Starting one output stops the other, so these write
+        # the action line the same way the Discord buttons do.
+        u.l_start.click(bound(t_local.start_local, app), None, u.sb_action)
+        u.l_stop.click(bound(t_local.stop_local, app), None, u.sb_action)
+        u.l_refresh.click(bound(t_local.refresh_sinks, app), None,
+                          [u.l_sink, u.sb_action])
+        u.l_sink.change(bound(t_local.set_sink, app), u.l_sink, u.sb_action)
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,

@@ -31,11 +31,16 @@ class DiagnosticsPanel:
 
 @dataclass(frozen=True)
 class OutputsPanel:
-    """The Discord connection row, moved out of the header into its own tab."""
+    """Where the audio goes. Two independent outputs, one at a time."""
     d_connect: Any
     d_channel: Any
     d_join: Any
     d_leave: Any
+    l_start: Any
+    l_stop: Any
+    l_sink: Any
+    l_refresh: Any
+    l_status: Any
 
 
 @dataclass(frozen=True)
