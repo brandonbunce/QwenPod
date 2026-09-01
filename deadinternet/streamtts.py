@@ -83,7 +83,9 @@ class StreamingVoice:
         # to re-derive the gain once the line is done.
         self._level = []
         # Half a sample held over from the previous chunk -- see _amplify.
+        # Pump-thread state: nothing else may touch it.
         self._carry = b""
+        self._expect_header = True
         self.proc = None
         self.play = None
         self._pump = None
@@ -104,10 +106,13 @@ class StreamingVoice:
 
     def _relevel(self):
         """Correct the gain from what the last line actually produced."""
-        if np is None or not self._level:
+        if np is None:
             return
-        raw = np.concatenate(self._level)
-        self._level = []
+        with self._lock:
+            chunks, self._level = self._level, []
+        if not chunks:
+            return
+        raw = np.concatenate(chunks)
         voiced = raw[np.abs(raw) > VOICED_FLOOR]
         if voiced.size < 100:
             return
@@ -199,7 +204,13 @@ class StreamingVoice:
         with self._lock:
             self._bytes = 0
             self._last = time.monotonic()
-            self._carry = b""
+            # A header is due at the start of this line's output.
+            self._expect_header = True
+            # NOTE: _carry is deliberately NOT reset here. It belongs to the
+            # pump thread, which may still be draining the previous line, and
+            # dropping its held half-sample byte-shifts everything after it --
+            # which is static, arriving at random depending on how the two
+            # threads happen to interleave. That was a real bug.
             try:
                 self.proc.stdin.write((line + "\n").encode())
                 self.proc.stdin.flush()
@@ -235,7 +246,9 @@ class StreamingVoice:
             # A header only ever appears at the start of a line's output, so
             # this looks for the magic rather than assuming a fixed cadence.
             while True:
-                at = pending.find(b"RIFF")
+                with self._lock:
+                    expecting = self._expect_header
+                at = pending.find(b"RIFF") if expecting else -1
                 if at < 0:
                     # None in sight. Forward everything but the last three
                     # bytes, which could be the beginning of one.
@@ -254,6 +267,11 @@ class StreamingVoice:
                     break
                 self._write(pending[:at])
                 pending = pending[at + WAV_HEADER:]
+                # One header per line, so stop looking. Four bytes of PCM can
+                # spell RIFF by accident, and stripping 44 bytes of real audio
+                # in the middle of a word is an audible click.
+                with self._lock:
+                    self._expect_header = False
         self._write(pending)
 
     def _write(self, data: bytes):
@@ -298,7 +316,8 @@ class StreamingVoice:
         samples = np.frombuffer(data[:keep], dtype="<i2").astype(np.float32)
         # Recorded before the gain is applied, so the correction is computed
         # against what the engine produced rather than against itself.
-        self._level.append(samples / 32768.0)
+        with self._lock:
+            self._level.append(samples / 32768.0)
         samples = samples * self.gain
         np.clip(samples, -32768, 32767, out=samples)
         return samples.astype("<i2").tobytes()

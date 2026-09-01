@@ -53,15 +53,48 @@ class _Chunks:
         return self.parts.pop(0) if self.parts else b""
 
 
-def test_payloads_survive_and_headers_do_not():
-    a, b = bytes(range(0, 200)), bytes(range(50, 150))
+def test_payload_survives_and_its_header_does_not():
+    a = bytes(range(0, 200))
     v = _voice()
-    v.proc = types.SimpleNamespace(stdout=io.BytesIO(_wav(a) + _wav(b)),
-                                   poll=lambda: None)
+    v.proc = types.SimpleNamespace(stdout=io.BytesIO(_wav(a)), poll=lambda: None)
     v._forward()
     out = v.play.stdin.getvalue()
-    assert out == a + b, f"{len(out)} bytes, expected {len(a + b)}"
+    assert out == a, f"{len(out)} bytes, expected {len(a)}"
     assert b"RIFF" not in out
+
+
+def test_riff_inside_audio_is_left_alone():
+    """One header per line, so the search stops after it. Four bytes of PCM
+    can spell RIFF by chance, and stripping 44 bytes of real audio mid-word is
+    an audible click."""
+    payload = bytes(range(0, 60)) + b"RIFF" + bytes(range(0, 60))
+    v = _voice()
+    v.proc = types.SimpleNamespace(stdout=io.BytesIO(_wav(payload)),
+                                   poll=lambda: None)
+    v._forward()
+    assert v.play.stdin.getvalue() == payload
+
+
+def test_carry_is_not_reset_by_a_new_line():
+    """The static bug. say() used to clear _carry while the pump thread was
+    still draining the previous line; dropping that held half-sample
+    byte-shifts every sample after it."""
+    v = _voice()
+    v.proc = types.SimpleNamespace(
+        stdout=io.BytesIO(), poll=lambda: None,
+        stdin=types.SimpleNamespace(write=lambda b: None, flush=lambda: None,
+                                    closed=False))
+    v._amplify(b"\x01")                     # pump holds half a sample
+    assert v._carry == b"\x01"
+    # say() waits for audio this fake process will never produce, so cap the
+    # wait instead of sitting out the real generation timeout.
+    was, S.GENERATE_TIMEOUT = S.GENERATE_TIMEOUT, 0.2
+    try:
+        v.say("a new line while that is still in flight")
+    finally:
+        S.GENERATE_TIMEOUT = was
+    assert v._carry == b"\x01", "say() must not touch pump-thread state"
+    assert v._expect_header is True, "a new line expects its own header"
 
 
 def test_header_split_across_reads():
