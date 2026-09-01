@@ -584,9 +584,11 @@ class DeadInternetApp:
         # Only meaningful for the local backend -- OpenAI does not touch VRAM.
         if (info and info[0] / info[1] > VRAM_WARN_FRACTION
                 and self.state.settings.provider == PROVIDER_OLLAMA):
-            msg += (f" **Warning: {info[0]:.1f}/{info[1]:.1f} GB VRAM in use.** The TTS server "
-                    "and Ollama are competing for the card; expect roughly 5x slower speech. "
-                    "Run `ollama stop <model>` on anything you are not using.")
+            msg += (f" **Warning: {info[0]:.1f}/{info[1]:.1f} GB VRAM in use.** The driver "
+                    "evicts tts-server's buffers to host memory and speech runs about 3x "
+                    "slower - and it does **not** recover when the card frees up again. "
+                    "Run `ollama stop <model>` on anything you are not using, then restart "
+                    "tts-server so it reallocates on an empty card.")
         return msg
 
     def stop_director(self):
@@ -750,7 +752,14 @@ class DeadInternetApp:
             return "vram: n/a"
         used, total = info
         frac = used / total
-        flag = " **LOW - TTS will crawl**" if frac > VRAM_WARN_FRACTION else ""
+        # "until tts-server restarts" is the load-bearing half. Measured on
+        # one process, in order: 0.16 s of compute per second of audio while
+        # the card was empty, 0.53 after a 12 GB model loaded alongside it,
+        # and still 0.53 once that model was unloaded again. Freeing VRAM
+        # does nothing on its own -- the buffers are already in host memory
+        # and stay there for the life of the process.
+        flag = (" **FULL - speech degraded until tts-server restarts**"
+                if frac > VRAM_WARN_FRACTION else "")
         return f"vram: {used:.1f}/{total:.1f} GB{flag}"
 
 

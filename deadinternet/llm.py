@@ -463,6 +463,14 @@ class OllamaClient(BaseLLM):
         # by app.rebuild_llm(); this client outlives any one setting change,
         # so it is an attribute rather than a constructor argument.
         self.think = False
+        # Whether this model will accept `think` at all. Ollama does NOT
+        # ignore the field on a model without a reasoning mode -- it answers
+        # 400 "<model> does not support thinking" and the request is lost.
+        # evolve_persona forces think=True, so on such a model every persona
+        # rewrite failed, silently and forever, while the show itself carried
+        # on working. Discovered from the first 400 and remembered for the
+        # session, the same way OpenAIClient learns its token parameter.
+        self.supports_think = True
 
     def models(self):
         try:
@@ -488,6 +496,7 @@ class OllamaClient(BaseLLM):
 
     def _post(self, messages, num_predict, temperature, fmt=None, think=False,
               label=""):
+        think = bool(think) and self.supports_think
         payload = {
             "model": self.model,
             "messages": messages,
@@ -507,8 +516,30 @@ class OllamaClient(BaseLLM):
         if payload["stream"]:
             return self._post_streamed(payload, label)
         r = self.http.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+        if self._refused_thinking(r, payload):
+            r = self.http.post(f"{self.base_url}/api/chat", json=payload,
+                               timeout=self.timeout)
         r.raise_for_status()
         return r.json().get("message", {})
+
+    def _refused_thinking(self, resp, payload) -> bool:
+        """Did this 400 mean "no reasoning mode"? If so, drop it from `payload`.
+
+        Answering without reasoning is enormously better than not answering:
+        the persona rewrite this unblocks is worth having even unreasoned, and
+        the alternative was losing it entirely.
+        """
+        if resp.status_code != 400 or not payload.get("think"):
+            return False
+        try:
+            body = resp.text.lower()
+        except Exception:
+            return False
+        if "think" not in body:
+            return False
+        self.supports_think = False
+        payload["think"] = False
+        return True
 
     def _post_streamed(self, payload, label):
         """Same request, read as it arrives.
@@ -523,6 +554,9 @@ class OllamaClient(BaseLLM):
         try:
             with self.http.post(f"{self.base_url}/api/chat", json=payload,
                                 timeout=self.timeout, stream=True) as r:
+                if self._refused_thinking(r, payload):
+                    call.end("retrying without thinking")
+                    return self._post_streamed(payload, label)
                 r.raise_for_status()
                 for line in r.iter_lines(decode_unicode=True):
                     if not line:
@@ -552,7 +586,10 @@ class OllamaClient(BaseLLM):
 
     def _chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
               think=None, label="") -> str:
-        want = self.think if think is None else think
+        # supports_think here as well as in _post, so a model already known to
+        # refuse it is not also given eight times the token budget to do the
+        # reasoning it is not going to do.
+        want = (self.think if think is None else think) and self.supports_think
         # Thinking has to fit inside num_predict alongside the answer, so a
         # request that asks for it is given room for it up front rather than
         # coming back empty and paying for a second round trip every line.

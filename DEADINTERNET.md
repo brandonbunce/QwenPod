@@ -136,17 +136,26 @@ at once, which is why `pkill`-both-then-start-the-app now works as a recipe.
 
 ## VRAM: the thing that will bite you
 
-The card has ~16 GB and **Ollama and tts-server compete for it**. Measured on
-this machine, same 1.7B model, same job:
+The card has ~16 GB and **Ollama and tts-server compete for it**. What matters
+is the state of the card **when tts-server allocates**, not the state it is in
+while it runs. Measured on one process, in this order, seconds of compute per
+second of audio produced (lower is better):
 
-| VRAM state | TTS speed |
-| --- | --- |
-| headroom free | 4.2 ms/frame, RTF 0.24 |
-| 99% full (two Ollama models resident) | 34 ms/frame, RTF 1.07 |
+| # | Card state | TTS speed |
+| --- | --- | --- |
+| A | started with an empty card (1.8 GB used) | **0.16** |
+| B | same process, a 12 GB model loaded alongside (16.6 GB) | 0.53 |
+| C | same process, that model unloaded again (4.4 GB) | 0.53 |
 
-A ~5x collapse, and **it does not recover on its own**. Once the driver evicts
-tts-server's Vulkan buffers to host memory they stay there for the life of the
-process; freeing VRAM afterwards does nothing. You must restart tts-server.
+A **3.3x collapse**, and **it does not recover on its own** — B and C are the
+same number. Once the driver evicts tts-server's Vulkan buffers to host memory
+they stay there for the life of the process; freeing VRAM afterwards does
+nothing. You must restart tts-server.
+
+This is worth stating plainly because the obvious experiment gives the wrong
+answer. Unloading Ollama and re-measuring shows *no change* — which looks like
+proof that VRAM does not matter, and is actually step C above. The only
+experiment that shows the effect is starting tts-server on an empty card.
 
 - Start tts-server while the card is empty — starting the app early does this
   for you, before Ollama has a model resident.
@@ -155,6 +164,34 @@ process; freeing VRAM afterwards does nothing. You must restart tts-server.
 - `ollama stop <model>` unloads one you're done with.
 - The status line shows live VRAM and warns past 85%. **If speech goes
   sluggish, check there first, then restart tts-server.**
+
+### The other half: cooperative matrix
+
+Check `tts-server.log` for the line ggml prints at startup:
+
+```
+ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1201) ... matrix cores: KHR_coopmat
+```
+
+If that says **`matrix cores: none`**, the GPU's matrix units are not being
+used at all and every matmul is running on plain vector math. On this machine
+RADV in Mesa 25.0.7 exposed no cooperative-matrix extension for GFX1201 (RDNA4)
+at all — `vulkaninfo | grep -c cooperative_matrix` returned 0. Mesa 26.1.2 from
+`trixie-backports` exposes it, and the same binary went from 0.80 to 0.53:
+
+```bash
+sudo apt install -t trixie-backports mesa-vulkan-drivers
+```
+
+No rebuild needed — it is a driver change, not a compile-time one. The
+tell-tale that something is wrong here is the CPU comparison: a CPU-only build
+of the same model on a 9950X runs at 1.36. A 16 GB GPU beating a CPU by only
+1.7x is not a GPU being used properly; with coopmat *and* an empty card at
+allocation time it is 0.16, which is 8.5x the CPU and 5x where this started.
+
+**ROCm is not an option here.** Debian 13 ships ROCm 5.5.1 and gfx1201 needs
+6.4+; there is no `hipcc` and `libhipblas0` is 5.5.1-4. It would mean AMD's own
+repository and a ~30 GB install, to beat a Vulkan path that is now working.
 
 ---
 
@@ -255,8 +292,14 @@ every request. Off by default, and worth understanding before turning it on:
 - **Ollama only.** An OpenAI-compatible endpoint has no equivalent field —
   reasoning there is a property of the model you pick, not of the request. The
   checkbox is accepted and ignored on that provider.
-- A model with no reasoning mode ignores `think` entirely, so turning this on
-  against `gemma4` changes nothing but the budget.
+- **A model with no reasoning mode does not ignore `think` — it refuses the
+  request.** Ollama answers `400 "<model> does not support thinking"` and the
+  whole call is lost. That matters because `evolve_persona` *forces*
+  `think=True`: on such a model every persona rewrite failed, silently and
+  forever, while the show itself carried on working normally. The client now
+  learns this from the first 400, drops `think`, retries, and remembers for the
+  session — the same way `OpenAIClient` learns its token parameter. An
+  unreasoned rewrite is enormously better than none.
 
 ### Seeing what it is waiting on
 
