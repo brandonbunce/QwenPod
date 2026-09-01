@@ -108,6 +108,7 @@ def build(app):
                 u.run_inject = run.run_inject
                 u.run_inject_now = run.run_inject_now
                 u.run_inject_queue = run.run_inject_queue
+                u.r_pipe = run.r_pipe
                 u.r_raw = run.r_raw
                 u.r_transcript = run.r_transcript
                 u.r_start = run.r_start
@@ -179,6 +180,7 @@ def build(app):
                 u.m_provider = behaviour.m_provider
                 u.m_think = behaviour.m_think
                 u.m_raw = behaviour.m_raw
+                u.m_pipe = behaviour.m_pipe
                 u.m_refresh_models = behaviour.m_refresh_models
                 u.m_model = behaviour.m_model
                 u.m_oa_model = behaviour.m_oa_model
@@ -349,6 +351,9 @@ def build(app):
         # after= for the same reason: rebuild_llm() is what attaches or drops
         # the tap, and the tap is what decides whether the request streams.
         bind(u.m_raw, "raw_feed", "raw output", bool, after=_rebuild_note)
+        # No after=: timings are always collected, so this only decides
+        # whether the strip is drawn -- nothing needs rebuilding.
+        bind(u.m_pipe, "pipeline_view", "stage strip", bool)
         bind(u.m_model, "ollama_model", "Ollama model", after=_rebuild_note)
         bind(u.m_oa_model, "openai_model", "OpenAI model",
              lambda v: (v or "").strip(), after=_rebuild_note)
@@ -402,7 +407,7 @@ def build(app):
 
         # Live feed. sb_action is deliberately absent: it is written only by
         # the handlers above, so a confirmation survives longer than 1.5s.
-        outs = [u.sb_status, u.r_raw, u.r_transcript, u.run_topic, u.run_queue,
+        outs = [u.sb_status, u.r_pipe, u.r_raw, u.r_transcript, u.run_topic, u.run_queue,
                 u.topic_queue_md, u.crowd_pending,
                 u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic,
                 u.m_topic, u.m_topic_from,

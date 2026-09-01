@@ -26,6 +26,7 @@ from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
                               OpenAIClient)
+from deadinternet.pipeline import Pipeline
 from deadinternet.rawfeed import NULL_TAP, RawFeed
 from deadinternet.transcribe import Whisper
 from deadinternet.tts import TTSClient
@@ -58,8 +59,13 @@ class DeadInternetApp:
         if args.model:
             s.ollama_model = args.model
 
+        # One tracker, shared by every client that can be the reason
+        # nothing is coming out. Built before them, because they take it.
+        self.pipeline = Pipeline()
         self.tts = TTSClient(s.tts_url)
+        self.tts.pipeline = self.pipeline
         self.whisper = Whisper(ROOT, s.whisper_binary, s.whisper_model, s.whisper_lang)
+        self.whisper.pipeline = self.pipeline
         # Kept alongside the active client so the UI can list Ollama models
         # even while OpenAI is selected.
         self.ollama = OllamaClient(s.ollama_url, s.ollama_model)
@@ -97,6 +103,7 @@ class DeadInternetApp:
         # Attaching the tap is the whole of what turns streaming on; the null
         # one leaves both providers on their original buffered request.
         client.tap = self.raw if s.raw_feed else NULL_TAP
+        client.pipeline = self.pipeline
         if not s.raw_feed:
             # Emptied rather than left as it was: nothing will write to it
             # again, and a box still showing the last generation an hour later
@@ -304,6 +311,8 @@ class DeadInternetApp:
         self.runtime = DiscordRuntime(token, log=self.log,
                                       on_topic=self.submit_crowd_topic)
         self.director = Director(self.state, self.tts, self.llm, self.runtime, log=self.log)
+        self.director.pipeline = self.pipeline
+        self.runtime.pipeline = self.pipeline
         self.runtime.on_text = self.director.push_user_text
         # /sayas needs the roster to offer and somewhere to send the line.
         self.runtime.on_say = self.director.say_now

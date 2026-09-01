@@ -16,6 +16,8 @@ import re
 import subprocess
 import tempfile
 
+from .pipeline import NULL_PIPELINE, WHISPER
+
 # whisper.cpp accepts 16 kHz mono PCM and nothing else, so whatever the browser
 # recorded has to be converted first. ffmpeg is already a dependency: the bot
 # uses it to feed Discord.
@@ -50,6 +52,7 @@ class Whisper:
         self.root = root
         self.binary = binary
         self.model = model
+        self.pipeline = NULL_PIPELINE
         self.lang = lang or "en"
         # whisper.cpp defaults to 4. Half the logical CPUs is a reasonable
         # ceiling on an SMT part -- past the physical core count the extra
@@ -78,6 +81,10 @@ class Whisper:
         Never raises: this sits behind a UI button, and a failed transcription
         should report itself rather than take the handler down.
         """
+        with self.pipeline.track(WHISPER):
+            return self._transcribe(audio_path)
+
+    def _transcribe(self, audio_path):
         ok, why = self.available()
         if not ok:
             return "", why

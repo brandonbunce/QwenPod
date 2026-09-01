@@ -12,6 +12,8 @@ import threading
 import requests
 import soundfile as sf
 
+from .pipeline import NULL_PIPELINE, TTS
+
 
 class TTSClient:
     def __init__(self, base_url: str, timeout: int = 600):
@@ -20,6 +22,10 @@ class TTSClient:
         self.http = requests.Session()
         self._registered = set()
         self._lock = threading.Lock()
+        # Set by app.py. Synthesis is the single most likely thing to be the
+        # reason nothing is coming out, so it is timed at the client rather
+        # than at each of the director's five call sites.
+        self.pipeline = NULL_PIPELINE
 
     # ---- introspection -----------------------------------------------
     def model_id(self) -> str:
@@ -100,6 +106,10 @@ class TTSClient:
     def synth(self, text: str, voice: str, **gen) -> bytes:
         """Return WAV bytes. response_format is mandatory -- without it the
         server replies with headerless PCM."""
+        with self.pipeline.track(TTS):
+            return self._synth(text, voice, **gen)
+
+    def _synth(self, text: str, voice: str, **gen) -> bytes:
         payload = {
             "model": self.model_id(),
             "input": text,

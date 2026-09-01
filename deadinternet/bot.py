@@ -24,6 +24,7 @@ import discord
 import numpy as np
 
 from .config import MAX_IMAGE_BYTES, Pin
+from .pipeline import NULL_PIPELINE, PLAY
 
 # How often the watchdog checks the voice connection still matches what the UI
 # asked for. Discord terminates the call when the last person leaves (close
@@ -257,6 +258,7 @@ class DiscordRuntime:
         # it after Discord terminates the call.
         self.target_channel_id: Optional[int] = None
         self.auto_rejoin = True
+        self.pipeline = NULL_PIPELINE
         # How many voices may talk over the one already speaking. Pushed on by
         # app.sync_voice_settings(); bot.py never reads settings itself.
         self.overlap_max = _Mixer.MAX_VOICES
@@ -848,6 +850,13 @@ class DiscordRuntime:
             loop.call_soon_threadsafe(done.set)
 
         self.voice.play(mixer, after=after)
+        # Timed, because "playback" being the long pole is a completely
+        # different diagnosis from the LLM being slow: it means the clip
+        # really is that long, not that anything is stuck.
+        with self.pipeline.track(PLAY):
+            await self._await_playback(done, timeout)
+
+    async def _await_playback(self, done, timeout):
         if not timeout:
             await done.wait()
             return

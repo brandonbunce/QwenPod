@@ -205,6 +205,46 @@ body ::-webkit-scrollbar-corner { background: transparent; }
    size itself. */
 .mic-hint { font-size: 0.8rem; margin-top: -0.3rem; opacity: 0.75; }
 
+/* ---- the stage strip -------------------------------------------------- */
+/* A row of state chips above the transcript. Wraps rather than scrolls: on a
+   narrow window a stage you cannot see is a stage you will not check. */
+.pipe-box.block { padding: 0 !important; }
+.pipe { font-size: 0.74rem; line-height: 1.3; margin-bottom: 0.35rem; }
+.pipe-row { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.pipe-off { color: var(--body-text-color-subdued); font-style: italic; }
+.pipe-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid var(--border-color-primary);
+  border-radius: 10px;
+  background: var(--background-fill-secondary);
+  color: var(--body-text-color-subdued);
+  white-space: nowrap;
+}
+/* The dot is the thing you read first, so it carries the state on its own --
+   colour AND fill, never colour alone. */
+.pipe-chip i {
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid var(--border-color-primary);
+  background: transparent;
+}
+.pipe-chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pipe-chip u { text-decoration: none; opacity: 0.7; }
+.pipe-chip.work {
+  color: var(--body-text-color);
+  border-color: var(--color-accent);
+}
+.pipe-chip.work i { background: var(--color-accent); border-color: var(--color-accent); }
+.pipe-chip.bad { border-color: #d13438; }
+.pipe-chip.bad i { background: #d13438; border-color: #d13438; }
+.pipe-chip.note { border-style: dashed; }
+.pipe-hold {
+  color: var(--body-text-color);
+  margin-bottom: 0.25rem;
+  padding-left: 0.1rem;
+}
+.pipe-hold b { color: var(--color-accent); }
+
 /* Raw model output. A Textbox for the same reason the event log is one -- it
    is unfiltered generation, and a stray backtick or hash in it must render as
    itself. Dimmer than the transcript below it: this is the working-out, not

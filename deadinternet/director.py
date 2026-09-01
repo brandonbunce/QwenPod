@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 from .adbreak import AdBreak, segment_lines
+from .pipeline import GAP, NULL_PIPELINE
 from .audio import ack_pcm, normalize_wav, truncate_wav
 from . import websearch
 from .config import (MODE_INTERACTIVE, MODE_MANUAL, MODE_PODCAST, Pin, Turn,
@@ -125,6 +126,10 @@ class Director:
         self._switch_now = False
         # A topic typed by hand, used in place of the next pin exactly once.
         self._manual_next: Optional[str] = None
+        # Set by app.py right after construction, alongside the tts and llm
+        # clients' own. Defaulted rather than required so a Director built in
+        # a test needs no wiring.
+        self.pipeline = NULL_PIPELINE
         # In-flight /sayas lines being spoken over the top of something else.
         self._over_tasks: set = set()
         self.manual_debug = {"overlaid": 0, "refused": 0, "last_overlay": ""}
@@ -1204,7 +1209,12 @@ class Director:
                     # the switch lands immediately rather than after a pause.
                     continue
 
-                await asyncio.sleep(max(0.0, self.state.settings.gap_seconds))
+                # Timed like everything else: a show that feels sluggish
+                # because the gap is set to three seconds looks exactly like
+                # one that is sluggish because the model is, until you can see
+                # which stage the time is actually in.
+                with self.pipeline.track(GAP):
+                    await asyncio.sleep(max(0.0, self.state.settings.gap_seconds))
 
             except asyncio.CancelledError:
                 raise

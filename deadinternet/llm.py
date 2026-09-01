@@ -11,6 +11,7 @@ import re
 
 import requests
 
+from .pipeline import NULL_PIPELINE, stage_for_label
 from .rawfeed import NULL_TAP
 
 # Keeps an Ollama model resident between turns; a cold reload costs seconds
@@ -66,6 +67,10 @@ class BaseLLM:
         # both providers on their original non-streaming request: attaching a
         # real one (app.py does) is the whole of what turns streaming on.
         self.tap = NULL_TAP
+        # Where per-call timings go. Same null-object arrangement as the tap:
+        # attaching a real one (app.py does) is the whole of what turns the
+        # Run tab's pipeline strip on.
+        self.pipeline = NULL_PIPELINE
 
     # ---- provider hooks ------------------------------------------------
     def models(self):
@@ -88,6 +93,19 @@ class BaseLLM:
         turn, which is the same shape of bug one argument along.
         """
         raise NotImplementedError
+
+    def chat(self, messages, num_predict=80, temperature=0.9, fmt=None,
+             think=None, label="") -> str:
+        """_chat, timed. Everything inside this class calls *this*.
+
+        One choke point rather than six: the label that already exists for the
+        raw feed decides which stage the time lands in, so a new kind of call
+        is instrumented by virtue of being labelled, and there is no per-site
+        wrapper to forget.
+        """
+        with self.pipeline.track(stage_for_label(label)):
+            return self._chat(messages, num_predict, temperature, fmt, think,
+                              label)
 
     def _image_message(self, text: str, b64: str, mime: str) -> dict:
         """A user message carrying an inline image. The two providers disagree
@@ -208,7 +226,7 @@ class BaseLLM:
             messages.append({"role": "user", "content": opener})
 
         return self._clean(
-            self._chat(messages, num_predict, temperature, label=speaker.name),
+            self.chat(messages, num_predict, temperature, label=speaker.name),
             speaker.name)
 
     # ---- vision ---------------------------------------------------------------
@@ -236,7 +254,7 @@ class BaseLLM:
         ]
         # Low temperature: this is reportage, not personality.
         return self._clean(
-            self._chat(messages, num_predict, 0.3, label="image"), "narrator")
+            self.chat(messages, num_predict, 0.3, label="image"), "narrator")
 
     # ---- persona authoring ---------------------------------------------------
     def build_persona(self, name: str, samples, note: str = "") -> str:
@@ -273,7 +291,7 @@ class BaseLLM:
             user += f"\n\nAdditional context about them: {note}"
         # Personas are long-form; the per-line token budget would truncate one
         # into nonsense.
-        return self._chat(
+        return self.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             num_predict=700,
             temperature=0.7,
@@ -326,7 +344,7 @@ class BaseLLM:
             f"WHAT {name} SAID:\n{said}\n\n"
             "Their new character sheet:"
         )
-        out = self._chat(
+        out = self.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             num_predict=400,
             temperature=0.7,
@@ -373,7 +391,7 @@ class BaseLLM:
                 f"What was said:\n{heard or '(nothing much)'}\n\n"
                 "Write the sponsor read.")
         return self._clean(
-            self._chat(
+            self.chat(
                 [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 num_predict=140,
                 temperature=1.0,
@@ -404,7 +422,7 @@ class BaseLLM:
         user = f"Recent conversation:\n{history}\n\n{user_name} just said: {user_text}\n\nWho replies?"
 
         try:
-            raw = self._chat(
+            raw = self.chat(
                 [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 num_predict=40,
                 temperature=0.2,

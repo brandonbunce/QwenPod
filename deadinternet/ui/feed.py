@@ -13,6 +13,8 @@ from typing import Any, NamedTuple
 
 import gradio as gr
 
+from .pipeview import pipeline_html
+
 # Live-update cadence, and how long one browser's feed runs before it has to be
 # restarted by a reload or the Refresh button.
 POLL_INTERVAL = 1.5
@@ -45,6 +47,7 @@ class FeedUpdate(NamedTuple):
     it here is the single easiest way to reintroduce that bug.
     """
     status: Any        # header status bar
+    pipe: Any          # Run tab: the live stage strip
     raw: Any           # Run tab: what the model is emitting, live
     transcript: Any    # Run tab
     run_topic: Any     # Run tab: current topic, with who pinned it
@@ -117,6 +120,7 @@ def poll(app, last_topic=None):
     q = queue_md(app)
     return FeedUpdate(
         status=app.status_line(),
+        pipe=pipeline_html(app),
         raw=app.raw.render(),
         transcript="\n\n".join(lines) if lines else "_(nothing yet)_",
         run_topic=run_topic,
@@ -143,6 +147,9 @@ def raw_only(app):
     """
     fields = {name: gr.update() for name in FeedUpdate._fields}
     fields["raw"] = app.raw.render()
+    # On the fast tick too: a stage chip that only counts up every 1.5s reads
+    # as frozen, which is the exact impression the strip exists to dispel.
+    fields["pipe"] = pipeline_html(app)
     return FeedUpdate(**fields)
 
 

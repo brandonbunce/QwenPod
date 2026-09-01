@@ -71,6 +71,7 @@ class RunPanel:
     run_inject: Any
     run_inject_now: Any
     run_inject_queue: Any
+    r_pipe: Any
     r_raw: Any
     r_transcript: Any
     r_start: Any
@@ -142,6 +143,7 @@ class BehaviourPanel:
     m_provider: Any
     m_think: Any
     m_raw: Any
+    m_pipe: Any
     m_refresh_models: Any
     m_model: Any
     m_oa_model: Any

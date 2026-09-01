@@ -345,6 +345,10 @@ class Settings:
     # setting at all -- turning it off puts both providers back on the exact
     # request they made before the box existed.
     raw_feed: bool = True
+    # Show the live stage strip above the transcript. Timings are always
+    # collected -- it is a dict update per call -- so this only decides
+    # whether the strip is drawn.
+    pipeline_view: bool = True
 
     # ---- between topics ----
     # Rewrite characters from what they said in the segment that just ended.

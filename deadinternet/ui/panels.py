@@ -227,6 +227,11 @@ def build_run(app, init_names):
                 label="Who's talking",
                 info="Tick to let someone join the conversation. Saves immediately.")
 
+            # What each part of the pipeline is doing, above what it
+            # produced. HTML rather than Markdown: it is a row of state chips,
+            # and nothing user-written reaches it -- see ui/pipeview.py.
+            r_pipe = gr.HTML(value="", elem_classes=["pipe-box"])
+
             # What the model is emitting, above what it actually said.
             # A Textbox, not Markdown: this is unfiltered output, and a stray
             # backtick or hash in it must render as itself rather than
@@ -269,6 +274,7 @@ def build_run(app, init_names):
         run_inject=run_inject,
         run_inject_now=run_inject_now,
         run_inject_queue=run_inject_queue,
+        r_pipe=r_pipe,
         r_raw=r_raw,
         r_transcript=r_transcript,
         r_start=r_start,
@@ -558,6 +564,13 @@ def build_behaviour(app):
              "because the reasoning has to fit inside the same budget as the "
              "answer. Expect seconds of extra latency per line, which in a live "
              "call is dead air. The interrupt router never thinks either way.")
+    m_pipe = gr.Checkbox(
+        value=state.settings.pipeline_view,
+        label="Show the stage strip",
+        info="A live row above the transcript saying what each part is doing "
+             "and for how long - which is the difference between the model "
+             "being slow, tts-server being queued, and the gap simply being "
+             "set long. Timings are collected either way; this only draws them.")
     m_raw = gr.Checkbox(
         value=state.settings.raw_feed, label="Show raw model output",
         info="Streams every generation into a box on the Run tab as it "
@@ -741,6 +754,7 @@ def build_behaviour(app):
         m_provider=m_provider,
         m_think=m_think,
         m_raw=m_raw,
+        m_pipe=m_pipe,
         m_refresh_models=m_refresh_models,
         m_model=m_model,
         m_oa_model=m_oa_model,

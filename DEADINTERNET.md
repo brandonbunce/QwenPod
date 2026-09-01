@@ -258,6 +258,57 @@ every request. Off by default, and worth understanding before turning it on:
 - A model with no reasoning mode ignores `think` entirely, so turning this on
   against `gemma4` changes nothing but the budget.
 
+### Seeing what it is waiting on
+
+A **stage strip** sits above the transcript on **Run** and says what each part
+of the pipeline is doing and for how long:
+
+```
+holding on TTS for 6.2s
+Router 232ms   LLM 1.8s   TTS 6.2s   Playback 2.5s   Gap 800ms   queued 3
+```
+
+The status bar says whether the director is *running*; this says what it is
+*waiting on*, which is the question you actually have when the show has gone
+quiet. A stall looks identical from outside whether the model is thinking,
+tts-server is queued behind another request, whisper is chewing on a clip, or
+the gap between turns is simply set to three seconds — and telling those apart
+used to mean reading `app.log` afterwards.
+
+- **A working stage counts up live.** The number is elapsed time on the call in
+  flight, not a stale reading; the strip is pushed on the feed's fast tick along
+  with the raw box, because a chip that only moves every 1.5s reads as frozen.
+  With several calls in flight the number follows the **oldest** — with three
+  synths running, what is holding the turn up is the slowest one, and `×3` on
+  the chip says how many there are.
+- **A stage that has never run shows `–`, not `0ms`.** Zero reads as "fast" when
+  it means "never happened", and "TTS has never been called" is exactly the
+  answer when nothing is coming out.
+- **Past four seconds in one stage it is named on its own line.** Counting up in
+  place is easy to miss; a healthy turn does not spend four seconds anywhere.
+- **`Router`, `LLM`, `TTS`, `Playback` and `Gap` are always shown.** `Whisper`,
+  `Ad`, `Evolve`, `Persona` and `Topic` appear once they have actually run, so a
+  show with no microphone does not carry permanently empty chips. Order is
+  fixed — a chip that moves when another stage wakes up is one you have to
+  re-find every time.
+- **The dashed chips are the counters the stages cannot explain**: messages
+  `queued`, `/sayas` lines `dropped`, and `voices` when more than one is talking.
+  A pipeline idle across the board with eight messages waiting is a different
+  fault from one idle with nothing waiting.
+- **A failed stage goes red and keeps the reason**, on the chip's tooltip along
+  with the call count and average.
+
+Instrumentation is at choke points, not call sites. Every LLM call is timed in
+`BaseLLM.chat()` and routed to a stage by the label that already existed for the
+raw output box, so `router`, `ad:`, `evolve:` and `persona:` land in their own
+chips and a new kind of call is instrumented by virtue of being labelled. TTS is
+timed in the client rather than at the director's five call sites; the same for
+whisper and for playback. **Timings are always collected** — it is a dict update
+per call — so *Show the stage strip* on **Behaviour** only decides whether they
+are drawn.
+
+Nothing is persisted. It is a window on the current process and dies with it.
+
 ### Watching the model work
 
 **Raw model output** sits above the transcript on **Run** and fills as each
