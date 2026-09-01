@@ -43,11 +43,26 @@ IDLE_S = 0.25
 # A line that never finishes must not park the caller forever.
 GENERATE_TIMEOUT = 120.0
 
-# Makeup gain, measured rather than guessed. The raw stream came out at
-# 0.0871 RMS over voiced samples against the buffered path's -20 dBFS target
-# of 0.1000, so the streaming engine is already very close and this is a trim,
-# not a rescue. Kept as a knob because it is per-reference-clip.
-DEFAULT_GAIN = 1.15
+# Levelling target, the same one normalize_wav uses on the buffered path:
+# -20 dBFS RMS. A *fixed* gain was the first attempt and it was wrong -- output
+# level tracks the reference clip, and measured across the roster those range
+# from 0.053 to 0.105 RMS. One voice came out at 0.2829 against this 0.1000,
+# nine decibels hot, which downstream is somebody's Bluetooth headset
+# distorting. So the gain is derived, not chosen.
+TARGET_RMS = 0.1
+DEFAULT_GAIN = 1.0
+# Never trust a measurement enough to swing the level more than this.
+MIN_GAIN, MAX_GAIN = 0.05, 6.0
+# Headroom. Measured, the engine's own output varies about sixfold in level
+# between consecutive lines of the *same* voice -- 0.038 to 0.225 RMS -- so a
+# gain fitted to the last line overshoots on the next one and clips. Distortion
+# is far worse than quiet here, so the gain is additionally capped by the peak
+# actually seen, and moved toward the target rather than snapped to it.
+PEAK_CEILING = 0.95
+SMOOTHING = 0.35
+# Samples quieter than this are the gaps between words; including them drags
+# the estimate down and the correction up.
+VOICED_FLOOR = 0.02
 
 
 class StreamingVoice:
@@ -64,6 +79,11 @@ class StreamingVoice:
         self.sink = sink or ""
         self.gain = float(gain)
         self.log = log
+        # Raw (pre-gain) samples of the line in flight, kept only long enough
+        # to re-derive the gain once the line is done.
+        self._level = []
+        # Half a sample held over from the previous chunk -- see _amplify.
+        self._carry = b""
         self.proc = None
         self.play = None
         self._pump = None
@@ -75,6 +95,37 @@ class StreamingVoice:
         self._stop = threading.Event()
 
     # ---- lifecycle ------------------------------------------------------
+    # There is deliberately no guess from the reference clip. That was tried:
+    # a clip at 0.0609 RMS produced output at 0.356 raw, and another voice with
+    # a louder reference produced 0.0871. The model normalises the reference
+    # internally, so output level does not track it at all and seeding from it
+    # made the first line worse rather than better. Measure the real output
+    # instead, and remember it across restarts via settings.stream_tts_gain.
+
+    def _relevel(self):
+        """Correct the gain from what the last line actually produced."""
+        if np is None or not self._level:
+            return
+        raw = np.concatenate(self._level)
+        self._level = []
+        voiced = raw[np.abs(raw) > VOICED_FLOOR]
+        if voiced.size < 100:
+            return
+        # `raw` is pre-gain, so what was heard is rms * gain.
+        rms = float(np.sqrt((voiced ** 2).mean()))
+        if rms <= 1e-4:
+            return
+        want = TARGET_RMS / rms
+        # Never ask for a gain that would have clipped the line just measured.
+        peak = float(np.abs(raw).max())
+        if peak > 1e-6:
+            want = min(want, PEAK_CEILING / peak)
+        want = min(max(want, MIN_GAIN), MAX_GAIN)
+        # Damped, because the next line is not this line. Snapping was tried:
+        # it fitted line one perfectly and drove line two into the ceiling.
+        self.gain = min(max(self.gain + (want - self.gain) * SMOOTHING,
+                            MIN_GAIN), MAX_GAIN)
+
     def start(self) -> bool:
         for label, path in (("qwen-tts", self.binary), ("model", self.model),
                             ("codec", self.codec), ("reference clip", self.ref_wav)):
@@ -148,6 +199,7 @@ class StreamingVoice:
         with self._lock:
             self._bytes = 0
             self._last = time.monotonic()
+            self._carry = b""
             try:
                 self.proc.stdin.write((line + "\n").encode())
                 self.proc.stdin.flush()
@@ -163,6 +215,7 @@ class StreamingVoice:
             with self._lock:
                 produced, quiet = self._bytes, time.monotonic() - self._last
             if produced and quiet > IDLE_S:
+                self._relevel()
                 return produced / BYTES_PER_SEC
         self.log("[stream] a line never finished generating")
         return None
@@ -220,25 +273,32 @@ class StreamingVoice:
             self._stop.set()
 
     def _amplify(self, data: bytes) -> bytes:
-        """Fixed makeup gain, with a hard limit.
+        """Apply the learned gain, keeping the 16-bit sample grid intact.
 
-        The buffered path runs every clip through normalize_wav on the way out.
-        Nothing can do that here -- levelling needs the whole clip and the
-        whole point is not to have it -- so a streamed line arrived about 20 dB
-        below everything else, which on a game's microphone input is inaudible.
+        The carry is the whole point, and without it this was a real bug.
+        Chunks arrive on arbitrary byte boundaries -- _forward slices at
+        `[:-3]` to hold back a possible header -- so an odd-length chunk leaves
+        the next one starting half a sample late. Parsed as int16 that
+        byte-swaps every sample in it: garbage values, which is both a wildly
+        wrong level estimate and, written to the device, audible static inside
+        otherwise fine speech.
 
-        A constant is right where per-chunk normalisation would be wrong:
-        measuring each chunk separately would pump the level within a single
-        sentence. One voice, one reference clip, one gain.
+        Preserving byte *content* is not enough, which is what the first
+        version did. The pipe does not care where writes land, but this
+        function parses each chunk, so alignment has to be carried across
+        calls rather than patched up at the end of each one.
         """
-        if self.gain == 1.0 or np is None:
+        if np is None:
             return data
-        # An odd trailing byte cannot be part of a sample yet; hold it back
-        # rather than mangling the frame it belongs to.
+        data = self._carry + data
         keep = len(data) - (len(data) % 2)
+        self._carry = data[keep:]
         if keep <= 0:
-            return data
+            return b""
         samples = np.frombuffer(data[:keep], dtype="<i2").astype(np.float32)
-        samples *= self.gain
+        # Recorded before the gain is applied, so the correction is computed
+        # against what the engine produced rather than against itself.
+        self._level.append(samples / 32768.0)
+        samples = samples * self.gain
         np.clip(samples, -32768, 32767, out=samples)
-        return samples.astype("<i2").tobytes() + data[keep:]
+        return samples.astype("<i2").tobytes()

@@ -499,11 +499,22 @@ Two details worth knowing:
   is upstream. The streaming path shells out to the `qwen-tts` CLI instead and
   pipes it at `paplay`, which is only natural because the local output is
   already a sound device.
-- **There is no loudness normalisation on this path.** `normalize_wav` needs
-  the whole clip, and not having the whole clip is the point. Measured, the raw
-  stream lands at 0.0871 RMS against the buffered path's -20 dBFS target of
-  0.1000, so a fixed 1.15x trim covers it -- a constant, because normalising
-  each chunk separately would pump the level inside a single sentence.
+- **Levelling is a feedback loop, not a constant.** `normalize_wav` needs the
+  whole clip and not having it is the point, so the gain is learned from what
+  each line actually produced and applied to the next. A fixed multiplier was
+  tried first and is wrong twice over: output level varies about **sixfold
+  between voices** (0.054 vs 0.132 RMS measured on two) and about **sixfold
+  between consecutive lines of the same voice** (0.038 to 0.225). Seeding the
+  guess from the reference clip was also tried, and is wrong for a third
+  reason -- the model normalises the reference internally, so a 0.0609 RMS clip
+  produced 0.356 output while a louder one produced 0.087.
+  So: measure the line, aim at -20 dBFS, **cap the gain by the peak just seen**
+  so it cannot ask for a level that would have clipped, and move only part of
+  the way. Snapping straight to the ideal fitted one line perfectly and drove
+  the next into the ceiling. The learned value is written back to
+  `stream_tts_gain` on close, so a restart starts level rather than loud.
+  Distortion is far worse than quiet here, and quiet is what a microphone gain
+  control is for.
 
 `--stream-by-line` emits **one 44-byte WAV header per line**, so the headers are
 stripped at each boundary and raw PCM is handed to a single long-lived

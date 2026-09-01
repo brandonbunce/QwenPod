@@ -332,7 +332,9 @@ class Settings:
     # holds a second copy of the model, about 3.4 GB.
     stream_tts: bool = False
     stream_tts_voice: str = ""
-    stream_tts_gain: float = 1.15
+    # Learned from the audio the streamer actually produces and written
+    # back when it closes, so a restart starts level. See streamtts.TARGET_RMS.
+    stream_tts_gain: float = 1.0
     tts_cli_binary: str = "build/qwen-tts"
     tts_binary: str = "build/tts-server"
     tts_model: str = "models/qwen-talker-1.7b-base-Q8_0.gguf"

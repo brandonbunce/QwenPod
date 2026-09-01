@@ -99,9 +99,18 @@ def test_gain_of_one_is_a_no_op():
     assert _voice(gain=1.0)._amplify(raw) == raw
 
 
-def test_odd_trailing_byte_is_preserved():
-    raw = np.array([1000, -1000], dtype="<i2").tobytes() + b"\x07"
-    assert _voice(gain=2.0)._amplify(raw).endswith(b"\x07")
+def test_odd_trailing_byte_is_carried_not_emitted():
+    """It must NOT be appended to this chunk's output -- that was the bug.
+    It belongs to a sample whose second half has not arrived, so it waits and
+    is parsed with its partner on the next call."""
+    v = _voice(gain=2.0)
+    out = v._amplify(np.array([1000, -1000], dtype="<i2").tobytes() + b"\x07")
+    assert len(out) == 4, f"emitted {len(out)} bytes, expected 4"
+    assert v._carry == b"\x07"
+    # The held byte reappears, in the right place, once its partner lands.
+    rest = v._amplify(b"\x00")
+    assert np.frombuffer(rest, dtype="<i2")[0] == 7 * 2
+    assert v._carry == b""
 
 
 def test_say_refuses_when_dead_or_empty():
@@ -156,6 +165,40 @@ def test_no_streamer_falls_through():
     d.runtime = types.SimpleNamespace(stream=None)
     d._manual_q = asyncio.Queue()
     assert asyncio.run(d._try_stream(("Alice", "hi"))) is False
+
+
+def test_odd_chunks_keep_the_sample_grid():
+    """The static bug: _forward slices on arbitrary byte boundaries, so an
+    odd-length chunk used to leave the next one starting half a sample late.
+    Parsed as int16 that byte-swaps every sample -- garbage values, a wildly
+    wrong level estimate, and audible noise inside otherwise fine speech."""
+    pcm = np.arange(-3000, 3000, 7, dtype="<i2").tobytes()
+    whole = _voice(gain=1.0)._amplify(pcm)
+    # Same bytes, handed over in awkward pieces.
+    v = _voice(gain=1.0)
+    pieces, i = [], 0
+    for n in (1, 3, 5, 2, 7, 11):
+        pieces.append(v._amplify(pcm[i:i + n]))
+        i += n
+    pieces.append(v._amplify(pcm[i:]))
+    assert b"".join(pieces) == whole, "odd chunking changed the samples"
+
+
+def test_level_estimate_survives_odd_chunking():
+    pcm = (np.sin(np.arange(4000) / 8.0) * 8000).astype("<i2").tobytes()
+    a = _voice(gain=1.0)
+    a._amplify(pcm)
+    straight = np.concatenate(a._level)
+    b = _voice(gain=1.0)
+    i = 0
+    for n in (1, 3, 5, 2, 7, 11, 1001):
+        b._amplify(pcm[i:i + n])
+        i += n
+    b._amplify(pcm[i:])
+    chunked = np.concatenate(b._level)
+    ra = float(np.sqrt((straight ** 2).mean()))
+    rb = float(np.sqrt((chunked ** 2).mean()))
+    assert abs(ra - rb) < 1e-6, f"level estimate differs: {ra:.5f} vs {rb:.5f}"
 
 
 if __name__ == "__main__":

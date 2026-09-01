@@ -178,8 +178,13 @@ class LocalRuntime:
 
     def close_stream(self):
         stream, self.stream = self.stream, None
-        if stream is not None:
-            stream.stop()
+        if stream is None:
+            return
+        # Carry the level it learned into the settings, so the first line of
+        # the next session is not the loud one.
+        if self.settings is not None and stream.gain:
+            self.settings.stream_tts_gain = round(float(stream.gain), 3)
+        stream.stop()
 
     def stream_say(self, text: str):
         """Speak through the resident streamer. -> seconds of audio, or None.
