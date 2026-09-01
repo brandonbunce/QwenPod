@@ -30,8 +30,11 @@ voices/
 music/
 
 # Transcripts and prompts of live sessions
-app.log
-tts-server.log
+# The glob matters: both of these roll to a .1, and app.log carries every
+# spoken line -- the transcript of a live session, which is exactly the thing
+# that must never reach a public fork.
+app.log*
+tts-server.log*
 
 # Local environment
 .venv-app/

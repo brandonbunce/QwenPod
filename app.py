@@ -160,6 +160,12 @@ class DeadInternetApp:
         log_path = os.path.join(ROOT, "tts-server.log")
         self.log(f"[tts] launching: {' '.join(cmd)}")
         try:
+            # Rolled the same way app.log is. This one is opened "ab" and
+            # handed to a subprocess, so nothing was ever capping it -- it had
+            # reached 15 MB of mostly the same twenty startup lines.
+            if (os.path.exists(log_path)
+                    and os.path.getsize(log_path) > LOG_MAX_BYTES):
+                os.replace(log_path, log_path + ".1")
             logfile = open(log_path, "ab")
             self._tts_proc = subprocess.Popen(
                 cmd, cwd=ROOT, stdout=logfile, stderr=logfile,
