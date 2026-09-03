@@ -37,21 +37,24 @@ handlers at once.
 """
 
 MIC_HTML = """
-<div id="qp-mic">
+<div id="qp-mic" class="qp-mic">
   <div class="qp-mic-row">
-    <select id="qp-mic-dev" title="Which microphone to record from"></select>
-    <select id="qp-mic-gap" title="How long a pause ends a sentence">
+    <select id="qp-mic-dev" class="qp-control qp-select qp-grow"
+            title="Which microphone to record from"></select>
+    <select id="qp-mic-gap" class="qp-control qp-select"
+            title="How long a pause ends a sentence">
       <option value="500" selected>pause 0.5s</option>
       <option value="800">pause 0.8s</option>
       <option value="1200">pause 1.2s</option>
       <option value="2000">pause 2.0s</option>
     </select>
-    <button id="qp-mic-rec" type="button">Record</button>
-    <label id="qp-mic-file-label" for="qp-mic-file" title="Send an audio file instead">File</label>
-    <input id="qp-mic-file" type="file" accept="audio/*">
-    <span id="qp-mic-meter"><i></i></span>
+    <button id="qp-mic-rec" class="qp-control qp-btn" type="button">Record</button>
+    <label id="qp-mic-file-label" class="qp-control qp-btn" for="qp-mic-file"
+           title="Send an audio file instead">File</label>
+    <input id="qp-mic-file" class="qp-hidden" type="file" accept="audio/*">
+    <span id="qp-mic-meter" class="qp-meter"><i></i></span>
   </div>
-  <div id="qp-mic-status">Pick a microphone and press Record.</div>
+  <div id="qp-mic-status" class="qp-mic-status">Pick a microphone and press Record.</div>
 </div>
 """
 
@@ -243,6 +246,7 @@ MIC_JS = r"""
     if (ctx) { ctx.close().catch(() => {}); ctx = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     meter.style.width = '0%';
+    meter.classList.remove('qp-voiced');
     btn.textContent = 'Record';
     btn.classList.remove('qp-recording');
     rec = null;
@@ -264,7 +268,7 @@ MIC_JS = r"""
       // Only on a transition: this runs ~50 times a second, and writing a
       // style every time is how you invent a performance problem.
       speaking = voiced;
-      meter.style.background = voiced ? '#3fb950' : 'var(--color-accent)';
+      meter.classList.toggle('qp-voiced', voiced);
       render();
     }
     if (voiced) { lastVoiceAt = now; heardSpeech = true; }

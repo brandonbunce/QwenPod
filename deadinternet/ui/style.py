@@ -9,6 +9,39 @@ the page still works in both the light and dark themes.
 """
 
 APP_CSS = """
+/* ---- tokens ----------------------------------------------------------- */
+/* One scale for the whole sheet. The type sizes used to be nine different
+   values between 0.74 and 1.02rem, chosen a rule at a time, and the corner
+   radii were four; picking the next one meant guessing.
+ *
+ * These are all LITERALS, on purpose. A token that reached for a gradio
+ * variable -- --qp-danger: var(--color-accent) -- would be wrong *here*: a
+ * custom property substitutes its inner var() against the element it was
+ * DECLARED on, and gradio emits its dark palette as `:root.dark, :root .dark`
+ * -- that second form lands on the container, one level below <html>. So a
+ * token declared at :root that reads a theme variable freezes on the LIGHT
+ * value, which is the same trap documented under scrollbars below. Theme
+ * colours therefore stay inline, at their point of use, everywhere in this
+ * file. */
+:root {
+  --qp-fs-xs: 0.75rem;    /* stage chips, raw model output */
+  --qp-fs-sm: 0.8rem;     /* status lines, the event log */
+  --qp-fs-md: 0.85rem;    /* mic controls */
+  --qp-fs-lg: 0.9rem;     /* the action line and the status strip */
+  --qp-fs-xl: 1rem;       /* the topic */
+  --qp-fs-brand: 1.6rem;  /* the masthead */
+
+  /* Gradio's --radius-sm stays inline for anything that should match a gradio
+     surface. These two are shapes it has no name for. */
+  --qp-radius-xs: 3px;
+  --qp-radius-pill: 999px;
+
+  /* State. Colour never carries meaning alone in this sheet -- each of these
+     lands with a fill, a border style or a word alongside it. */
+  --qp-danger: #d13438;
+  --qp-ok: #3fb950;
+}
+
 /* ---- masthead ------------------------------------------------------- */
 /* Masthead and action line are one header block: the rule that closes it sits
    under the action line, not between them. */
@@ -20,7 +53,7 @@ APP_CSS = """
 }
 .masthead .brand h1 {
   margin: 0;
-  font-size: 1.6rem;
+  font-size: var(--qp-fs-brand);
   letter-spacing: -0.02em;
   white-space: nowrap;
 }
@@ -41,7 +74,7 @@ APP_CSS = """
 .status-strip {
   flex: 0 1 auto !important;
   text-align: right;
-  font-size: 0.92rem;
+  font-size: var(--qp-fs-lg);
   line-height: 1.35;
   color: var(--body-text-color-subdued);
 }
@@ -64,7 +97,7 @@ APP_CSS = """
   border-left: 3px solid var(--color-accent);
   border-bottom: 1px solid var(--border-color-primary);
   background: var(--background-fill-secondary);
-  border-radius: 0 3px 0 0;
+  border-radius: 0 var(--qp-radius-xs) 0 0;
   margin-bottom: 0.4rem !important;
 }
 .action-line.prose {
@@ -75,7 +108,7 @@ APP_CSS = """
 }
 .action-line p {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: var(--qp-fs-lg);
   line-height: 1.35;
 }
 /* A long message wraps rather than stretching the header; two lines is plenty
@@ -85,12 +118,14 @@ APP_CSS = """
   max-height: 2.7em;
   overflow-y: auto;
 }
-/* Inline code here is a model name or a URL, not a code block. */
+/* Inline code here is a model name or a URL, not a code block. The one size
+   in this sheet deliberately left off the scale above: em, not rem, so it
+   tracks the line it sits in rather than fixing itself against the page. */
 .action-line code {
   font-size: 0.85em;
   padding: 0.05em 0.3em;
   background: var(--background-fill-primary);
-  border-radius: 3px;
+  border-radius: var(--qp-radius-xs);
 }
 
 /* ---- scrollbars ------------------------------------------------------- */
@@ -118,7 +153,7 @@ body ::-webkit-scrollbar-thumb {
   background: var(--border-color-primary);
   border: 2px solid transparent;
   background-clip: padding-box;
-  border-radius: 6px;
+  border-radius: var(--qp-radius-pill);
 }
 body::-webkit-scrollbar-thumb:hover,
 body ::-webkit-scrollbar-thumb:hover {
@@ -156,7 +191,7 @@ body ::-webkit-scrollbar-corner { background: transparent; }
   padding: 0.5rem 0.7rem;
 }
 .transcript-box p, .queue-box p, .status-box p { margin: 0.25rem 0; }
-.topic-box { font-size: 1.02rem; }
+.topic-box { font-size: var(--qp-fs-xl); }
 
 /* ---- microphone ------------------------------------------------------ */
 /* The hidden seam: the recorder writes an uploaded file's server path here and
@@ -164,59 +199,80 @@ body ::-webkit-scrollbar-corner { background: transparent; }
    visible=False so the textarea is guaranteed to be in the DOM to write to. */
 .qp-hidden { display: none !important; }
 
-#qp-mic { margin-top: 0.25rem; }
+/* The mic is hand-written markup rather than a gradio component, and it used
+   to be the one part of the page styled through #ids -- a hundred points of
+   specificity above every other rule here, for no reason beyond the ids being
+   the handles its JS already held. The ids are still in the markup and still
+   what the JS reaches for; nothing is *styled* through them any more. */
+.qp-mic { margin-top: 0.25rem; }
 .qp-mic-row { display: flex; align-items: center; gap: 0.4rem; }
-#qp-mic-dev, #qp-mic-gap {
+
+/* One recipe for every control in the row. The two roles below change only
+   what they must -- which is the whole of the difference between them. */
+.qp-control {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.4rem;
+  font-size: var(--qp-fs-md);
+}
+.qp-select {
   background: var(--input-background-fill);
   color: var(--body-text-color);
-  border: 1px solid var(--border-color-primary);
-  border-radius: var(--radius-sm);
-  padding: 0.3rem 0.4rem; font-size: 0.85rem;
 }
-/* The device name is the long one; the pause is four fixed options. */
-#qp-mic-dev { flex: 1 1 auto; min-width: 0; }
-#qp-mic-gap { flex: 0 0 auto; }
-#qp-mic-rec, #qp-mic-file-label {
-  flex: 0 0 auto; cursor: pointer; white-space: nowrap;
+.qp-btn {
+  cursor: pointer; white-space: nowrap;
+  padding: 0.3rem 0.7rem;
   background: var(--button-secondary-background-fill);
   color: var(--button-secondary-text-color);
-  border: 1px solid var(--border-color-primary);
-  border-radius: var(--radius-sm);
-  padding: 0.3rem 0.7rem; font-size: 0.85rem;
 }
-#qp-mic-rec.qp-recording {
-  background: #d13438; color: #fff; border-color: #d13438;
+/* The device name is the long one; the pause is four fixed options. */
+.qp-grow { flex: 1 1 auto; min-width: 0; }
+.qp-btn.qp-recording {
+  background: var(--qp-danger); color: #fff; border-color: var(--qp-danger);
 }
-#qp-mic-file { display: none; }
+
 /* Live input level. A dead microphone reads as a bar that never moves, which
    is the thing that was impossible to see before. */
-#qp-mic-meter {
-  flex: 0 0 70px; height: 6px; border-radius: 3px;
+.qp-meter {
+  flex: 0 0 70px; height: 6px; border-radius: var(--qp-radius-pill);
   background: var(--border-color-primary); overflow: hidden;
 }
-#qp-mic-meter i { display: block; height: 100%; width: 0%; transition: width 0.05s linear; }
-#qp-mic-status { font-size: 0.8rem; opacity: 0.8; margin-top: 0.25rem; min-height: 1.1em; }
+/* The width is a live measurement and stays on the element. The colour is a
+   state, so it belongs here -- and it needs a resting value: the JS only ever
+   wrote a colour on a change of state, so until you first spoke the bar was
+   drawn at the right width in no colour at all, which looks exactly like the
+   dead input this meter exists to rule out. */
+.qp-meter i {
+  display: block; height: 100%; width: 0%;
+  background: var(--color-accent);
+  transition: width 0.05s linear;
+}
+.qp-meter i.qp-voiced { background: var(--qp-ok); }
+.qp-mic-status {
+  font-size: var(--qp-fs-sm); opacity: 0.8;
+  margin-top: 0.25rem; min-height: 1.1em;
+}
 
-/* Do NOT cap the height of this component. An earlier version set
-   max-height: 78px to stop the recorder reserving waveform-editor space, but
-   gradio's own .block sets overflow: hidden -- so the cap silently clipped the
-   bottom 18px, which is exactly where Stop, pause and Resume live. Recording
-   started, the waveform moved, and there was no way to finish the take. Let it
-   size itself. */
-.mic-hint { font-size: 0.8rem; margin-top: -0.3rem; opacity: 0.75; }
+/* Kept as a warning, though the rule it guarded is gone: do NOT cap the height
+   of a recorder. An earlier version set max-height: 78px to stop gradio's
+   Audio reserving waveform-editor space, but gradio's own .block sets
+   overflow: hidden -- so the cap silently clipped the bottom 18px, which is
+   exactly where Stop, pause and Resume live. Recording started, the waveform
+   moved, and there was no way to finish the take. */
 
 /* ---- the stage strip -------------------------------------------------- */
 /* A row of state chips above the transcript. Wraps rather than scrolls: on a
    narrow window a stage you cannot see is a stage you will not check. */
 .pipe-box.block { padding: 0 !important; }
-.pipe { font-size: 0.74rem; line-height: 1.3; margin-bottom: 0.35rem; }
+.pipe { font-size: var(--qp-fs-xs); line-height: 1.3; margin-bottom: 0.35rem; }
 .pipe-row { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .pipe-off { color: var(--body-text-color-subdued); font-style: italic; }
 .pipe-chip {
   display: inline-flex; align-items: center; gap: 0.3rem;
   padding: 0.12rem 0.4rem;
   border: 1px solid var(--border-color-primary);
-  border-radius: 10px;
+  border-radius: var(--qp-radius-pill);
   background: var(--background-fill-secondary);
   color: var(--body-text-color-subdued);
   white-space: nowrap;
@@ -235,8 +291,8 @@ body ::-webkit-scrollbar-corner { background: transparent; }
   border-color: var(--color-accent);
 }
 .pipe-chip.work i { background: var(--color-accent); border-color: var(--color-accent); }
-.pipe-chip.bad { border-color: #d13438; }
-.pipe-chip.bad i { background: #d13438; border-color: #d13438; }
+.pipe-chip.bad { border-color: var(--qp-danger); }
+.pipe-chip.bad i { background: var(--qp-danger); border-color: var(--qp-danger); }
 .pipe-chip.note { border-style: dashed; }
 .pipe-hold {
   color: var(--body-text-color);
@@ -251,7 +307,7 @@ body ::-webkit-scrollbar-corner { background: transparent; }
    the show. */
 .raw-box textarea {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: var(--qp-fs-xs);
   line-height: 1.4;
   color: var(--body-text-color-subdued);
   background: var(--background-fill-primary);
@@ -265,7 +321,7 @@ body ::-webkit-scrollbar-corner { background: transparent; }
    markdown; monospace keeps its timestamp column aligned. */
 .log-box textarea {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: var(--qp-fs-sm);
   line-height: 1.45;
   white-space: pre;
   overflow-x: auto;

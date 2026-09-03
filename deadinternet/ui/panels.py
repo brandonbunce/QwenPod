@@ -36,7 +36,21 @@ LOCAL_HINT = (
     "```\n\n"
     "Then pick **qwenpod** above and **QwenPod_Microphone** as the input "
     "device in the other application. Press *Refresh devices* after creating "
-    "it. The modules are not persistent - they go away on reboot."
+    "it.\n\n"
+    "**To hear it yourself**, loop the sink's monitor back to your speakers. A "
+    "null sink has no output of its own, so without this you go deaf to "
+    "everything you are sending:\n\n"
+    "```\n"
+    "pactl load-module module-loopback source=qwenpod.monitor latency_msec=60\n"
+    "```\n\n"
+    "Leaving out `sink=` is deliberate - it attaches to whatever your *default* "
+    "output is, and follows it when you change devices. The game still gets a "
+    "clean copy; monitoring takes nothing away from it, and the loopback shows "
+    "up in `pavucontrol` as its own stream so you can turn your monitor down "
+    "without touching what anyone else hears. On Bluetooth keep the latency at "
+    "60ms or so; wired can go to 20.\n\n"
+    "None of these modules survive a reboot. `pactl unload-module <id>` removes "
+    "one, newest first."
 )
 
 
