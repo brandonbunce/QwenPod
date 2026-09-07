@@ -241,10 +241,17 @@ fallbacks and a scrollbar styled there comes out pale grey on a dark page.
 Leaving `<html>` alone also lets the spec propagate `body`'s scrollbar styling
 to the viewport, so the page scrollbar matches too.
 
-The roster strip on **Speakers** scrolls sideways with a plain mouse wheel — a
-vertical wheel has nowhere else to go there, and the arrows alone made a long
-roster tedious. At either end the event is released so the page scrolls
-normally, rather than the strip becoming something you have to steer around.
+The roster strip on **Speakers** is **three rows deep and scrolls sideways**
+with a plain mouse wheel — a vertical wheel has nowhere else to go there, and
+the arrows alone made a long roster tedious. At either end the event is
+released so the page scrolls normally, rather than the strip becoming something
+you have to steer around.
+
+Three rows comes from `grid-auto-flow: column` with `grid-template-rows:
+repeat(3, auto)`: the grid fills *down* each column before starting the next,
+so the strip stays horizontal and becomes a third as wide. `flex-wrap` cannot
+do this — it fills across and wraps down, which needs a height cap and turns
+the scroll vertical.
 
 **Styling either of them: gradio puts `elem_classes` on both the outer `.block`
 and the inner `.prose` div.** A bare `.action-line { padding; border }` is

@@ -164,21 +164,30 @@ body::-webkit-scrollbar-corner,
 body ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---- roster strip ---------------------------------------------------- */
-/* Radio options laid out as a horizontal scrolling strip. Gradio stacks them
-   vertically by default, which turned a long roster into the tallest thing on
-   the page. */
+/* Radio options laid out as a horizontally scrolling block, three rows deep.
+   Gradio stacks them vertically by default, which turned a long roster into
+   the tallest thing on the page; one row instead meant a 34-name roster was
+   several screens wide and you scrolled for a while to reach the end.
+ *
+ * A grid with `grid-auto-flow: column` is what gives three rows AND keeps the
+ * scrolling horizontal -- it fills down the first column, then the next, so
+ * the strip is a third as wide as it was. Flex-wrap cannot do this: it fills
+ * across and wraps down, which needs a height cap and scrolls vertically. */
 .roster-bar .wrap,
 .roster-bar > div {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
+  display: grid !important;
+  grid-auto-flow: column !important;
+  grid-template-rows: repeat(3, auto) !important;
+  /* max-content, so a name is never squeezed or padded to a shared width. */
+  grid-auto-columns: max-content;
+  justify-items: start;
+  align-content: start;
   overflow-x: auto;
-  gap: 0.35rem;
+  gap: 0.2rem 0.35rem;
   padding-bottom: 0.3rem;
   scrollbar-width: thin;
 }
 .roster-bar label {
-  flex: 0 0 auto !important;
   white-space: nowrap;
 }
 
