@@ -84,3 +84,28 @@ def restart_tts(app, device):
         return warn(f"Restart failed - {e}")
     app.events.add(VOICE, f"tts-server restart ({device}) - {msg}")
     return note(msg) if ok else warn(msg)
+
+
+def stop_tts(app):
+    """Shut tts-server down and hand the card back.
+
+    Reports what was actually freed rather than just claiming success: the
+    driver releases VRAM asynchronously, so "stopped" and "the card is yours"
+    are not the same statement, and the second one is the one being asked for.
+    """
+    from ...config import vram_info
+    before = vram_info()
+    try:
+        ok, msg = app.stop_tts_server()
+    except Exception as e:
+        return warn(f"Could not stop tts-server - {e}")
+    if not ok:
+        return note(msg)
+    after = vram_info()
+    freed = ""
+    if before and after:
+        freed = (f" Freed {max(0.0, before[0] - after[0]):.1f} GB - card is "
+                 f"now {after[0]:.1f}/{after[1]:.1f} GB.")
+    app.events.add(VOICE, f"tts-server stopped -{freed or ' ' + msg}")
+    return note(f"{msg}{freed} Nothing can speak until it comes back; the next "
+                "thing that needs it will start it again.")

@@ -34,7 +34,11 @@ TTS_HINT = (
     "empty card, 0.53s started full.\n\n"
     "**CPU** runs the same binary with the GPU hidden from it - about 2.5x "
     "slower than a healthy GPU, but it needs no VRAM at all, which is worth "
-    "having when something else needs the whole card."
+    "having when something else needs the whole card.\n\n"
+    "**Stop** frees the card entirely - about 6.5 GB - for a game or a larger "
+    "model. Nothing can speak while it is down, and the next thing that tries "
+    "to will start it again automatically, on whichever backend is selected "
+    "above."
 )
 
 # The recipe for turning the local output into something other applications can
@@ -169,6 +173,7 @@ def build_outputs(app):
                 choices=TTS_DEVICES, value=app.state.settings.tts_device,
                 label="Backend", scale=2, container=True)
             t_restart = gr.Button("Restart tts-server", scale=1)
+            t_stop = gr.Button("Stop tts-server", scale=1)
         t_status = gr.Markdown(TTS_HINT)
     return OutputsPanel(
         d_connect=d_connect,
@@ -183,6 +188,7 @@ def build_outputs(app):
         l_stream=l_stream,
         l_stream_voice=l_stream_voice,
         t_restart=t_restart,
+        t_stop=t_stop,
         t_device=t_device,
         t_status=t_status,
     )
