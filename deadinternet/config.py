@@ -137,6 +137,10 @@ MODE_MANUAL = "manual"
 
 # Where the conversation is played. Two independent outputs, one at a time:
 # the director holds a single runtime and "which one" is this setting.
+TTS_GPU = "gpu"
+TTS_CPU = "cpu"
+TTS_DEVICES = [TTS_GPU, TTS_CPU]
+
 OUTPUT_DISCORD = "discord"
 OUTPUT_LOCAL = "local"
 OUTPUTS = [OUTPUT_DISCORD, OUTPUT_LOCAL]
@@ -336,6 +340,10 @@ class Settings:
     # back when it closes, so a restart starts level. See streamtts.TARGET_RMS.
     stream_tts_gain: float = 1.0
     tts_cli_binary: str = "build/qwen-tts"
+    # Which backend tts-server comes up on. The same binary does both: an
+    # empty GGML_VK_VISIBLE_DEVICES hides the GPU from ggml and it falls back
+    # to CPU, so there is nothing to rebuild to switch.
+    tts_device: str = TTS_GPU
     tts_binary: str = "build/tts-server"
     tts_model: str = "models/qwen-talker-1.7b-base-Q8_0.gguf"
     tts_codec: str = "models/qwen-tokenizer-12hz-F32.gguf"

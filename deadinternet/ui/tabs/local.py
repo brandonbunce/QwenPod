@@ -69,3 +69,18 @@ def set_stream(app, enabled, voice):
                     "see the log. Buffered synthesis still works.")
     app.events.add(VOICE, f"streaming voice: {sp.name}")
     return note(f"Streaming as **{sp.name}**. First line loads the model.")
+
+
+def restart_tts(app, device):
+    """Bring tts-server back up, optionally on the other backend.
+
+    Slow on purpose -- it waits for the old process to release the card before
+    launching the new one, because relaunching into VRAM that has not been
+    freed yet reproduces the exact problem this button exists to fix.
+    """
+    try:
+        ok, msg = app.restart_tts_server(device)
+    except Exception as e:
+        return warn(f"Restart failed - {e}")
+    app.events.add(VOICE, f"tts-server restart ({device}) - {msg}")
+    return note(msg) if ok else warn(msg)

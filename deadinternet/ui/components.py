@@ -43,6 +43,9 @@ class OutputsPanel:
     l_status: Any
     l_stream: Any
     l_stream_voice: Any
+    t_restart: Any
+    t_device: Any
+    t_status: Any
 
 
 @dataclass(frozen=True)

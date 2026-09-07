@@ -164,6 +164,19 @@ experiment that shows the effect is starting tts-server on an empty card.
 - `ollama stop <model>` unloads one you're done with.
 - The status line shows live VRAM and warns past 85%. **If speech goes
   sluggish, check there first, then restart tts-server.**
+- **Restart tts-server** on the **Outputs** tab does that without a terminal.
+  It stops the running server, waits for the driver to actually release the
+  card, relaunches, and re-registers the roster; the confirmation says what the
+  VRAM was *at the moment it allocated*, and warns if that was still full
+  enough to have evicted it again. Note it finds the running server through
+  `/proc` rather than through a handle, because the server is deliberately
+  detached and usually outlives the app that started it.
+- The same control switches **backend**. One binary does both: an empty
+  `GGML_VK_VISIBLE_DEVICES` hides the GPU from ggml and it falls back to CPU,
+  so nothing is rebuilt to switch. `GGML_VULKAN_DISABLE` and `GGML_VK_DISABLE`
+  are both ignored -- they were tried. CPU is roughly 2.5x slower than a
+  healthy GPU but costs no VRAM at all, which is the trade when something else
+  needs the whole card.
 
 ### The other half: cooperative matrix
 

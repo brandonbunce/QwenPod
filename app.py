@@ -10,6 +10,7 @@ import argparse
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ import urllib.request
 
 from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
                                  OUTPUT_DISCORD, OUTPUT_LOCAL,
+                                 TTS_CPU, TTS_DEVICES, TTS_GPU,
                                  PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
                                  VRAM_WARN_FRACTION, State, gpu_busy_percent,
@@ -158,6 +160,13 @@ class DeadInternetApp:
         port = s.tts_url.rsplit(":", 1)[-1]
         cmd = [binary, "--model", model, "--codec", codec,
                "--host", "127.0.0.1", "--port", port, "--lang", s.tts_lang]
+        env = dict(os.environ)
+        if s.tts_device == TTS_CPU:
+            # One binary, both backends: ggml enumerates no Vulkan device when
+            # this is empty and falls back to CPU. GGML_VULKAN_DISABLE and
+            # GGML_VK_DISABLE were both tried and are ignored.
+            env["GGML_VK_VISIBLE_DEVICES"] = ""
+        self.log(f"[tts] backend: {s.tts_device}")
         log_path = os.path.join(ROOT, "tts-server.log")
         self.log(f"[tts] launching: {' '.join(cmd)}")
         try:
@@ -169,7 +178,7 @@ class DeadInternetApp:
                 os.replace(log_path, log_path + ".1")
             logfile = open(log_path, "ab")
             self._tts_proc = subprocess.Popen(
-                cmd, cwd=ROOT, stdout=logfile, stderr=logfile,
+                cmd, cwd=ROOT, stdout=logfile, stderr=logfile, env=env,
                 start_new_session=True,
             )
         except OSError as e:
@@ -256,6 +265,89 @@ class DeadInternetApp:
             return True
         except (urllib.error.URLError, OSError):
             return None
+
+    def tts_pids(self):
+        """PIDs of any running tts-server, ours or not.
+
+        Ours is usually self._tts_proc, but not always: the server is started
+        detached and survives the app, so after an app restart the one that is
+        running was inherited rather than launched. /proc is the only thing
+        that knows about both.
+        """
+        binary = os.path.join(ROOT, self.state.settings.tts_binary)
+        found = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    argv = f.read().split(b"\0")
+            except OSError:
+                continue
+            if argv and argv[0].decode("utf-8", "replace") == binary:
+                found.append(int(entry))
+        return found
+
+    def stop_tts_server(self, timeout=15.0):
+        """Stop tts-server and wait for it to actually let go of the card."""
+        pids = self.tts_pids()
+        if not pids:
+            self._tts_proc = None
+            return False, "tts-server was not running."
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.time() + timeout
+        while time.time() < deadline and self.tts_pids():
+            time.sleep(0.3)
+        left = self.tts_pids()
+        for pid in left:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        self._tts_proc = None
+        # VRAM is released asynchronously by the driver, and relaunching
+        # before it lands is the whole eviction problem in miniature.
+        time.sleep(1.5)
+        return True, f"Stopped tts-server ({len(pids)} process(es))."
+
+    def restart_tts_server(self, device=None):
+        """Stop, wait for the card, and bring it back. -> (ok, message).
+
+        Exists because the state it recovers from is invisible and permanent:
+        a tts-server that allocated while the card was full runs about 3x
+        slower for the rest of its life, and freeing VRAM afterwards does
+        nothing. The only cure is relaunching it on an empty card, and before
+        this that meant a terminal and remembering the order.
+        """
+        s = self.state.settings
+        if device in TTS_DEVICES and device != s.tts_device:
+            s.tts_device = device
+            self.state.save()
+        with self._tts_lock:
+            _, stopped = self.stop_tts_server()
+            before = vram_info()
+            ok, msg = self._start_tts_server()
+            if not ok:
+                return False, f"{stopped} {msg}"
+            # A fresh server has an empty registry.
+            self.tts._registered.clear()
+            problems = self.tts.ensure_registered(self.state.restorable())
+        after = vram_info()
+        note = ""
+        if before:
+            note = (f" Card was {before[0]:.1f}/{before[1]:.1f} GB when it "
+                    f"allocated")
+            if before[0] / before[1] > VRAM_WARN_FRACTION:
+                note += (" - **that is full enough to have evicted it again**; "
+                         "free VRAM and restart it once more")
+            note += "."
+        voices = len(self.state.restorable()) - len(problems)
+        return True, (f"{stopped} Restarted on **{s.tts_device.upper()}**, "
+                      f"{voices} voices registered.{note}")
 
     def boot_tts(self, autostart=True):
         """Get tts-server running and the roster registered on it.

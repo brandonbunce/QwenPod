@@ -18,8 +18,24 @@ from .feedback import tpl_vars
 from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
-from ..config import HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS, RECOMMENDED
+from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
+                      RECOMMENDED, TTS_DEVICES)
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
+
+# Why a restart button exists at all. The state it recovers from is invisible
+# and permanent, so "it sounds sluggish" is the only symptom and a terminal was
+# the only cure.
+TTS_HINT = (
+    "**Restart it after freeing VRAM.** tts-server allocates once, at startup. "
+    "If the card was full then - a big model in Ollama, or a game - the driver "
+    "puts its buffers in host memory and speech runs about 3x slower for the "
+    "life of the process. Freeing VRAM afterwards does **not** undo it; only a "
+    "restart does. Measured: 0.16s of compute per second of audio started on an "
+    "empty card, 0.53s started full.\n\n"
+    "**CPU** runs the same binary with the GPU hidden from it - about 2.5x "
+    "slower than a healthy GPU, but it needs no VRAM at all, which is worth "
+    "having when something else needs the whole card."
+)
 
 # The recipe for turning the local output into something other applications can
 # select as a microphone. Spelled out rather than linked: it is two commands,
@@ -145,6 +161,15 @@ def build_outputs(app):
                 value=app.state.settings.stream_tts_voice or None,
                 label="Streamed voice", scale=2, container=True)
         l_status = gr.Markdown(LOCAL_HINT)
+
+    with gr.Group():
+        gr.Markdown("**Speech engine** - shared by both outputs.")
+        with gr.Row():
+            t_device = gr.Radio(
+                choices=TTS_DEVICES, value=app.state.settings.tts_device,
+                label="Backend", scale=2, container=True)
+            t_restart = gr.Button("Restart tts-server", scale=1)
+        t_status = gr.Markdown(TTS_HINT)
     return OutputsPanel(
         d_connect=d_connect,
         d_channel=d_channel,
@@ -157,6 +182,9 @@ def build_outputs(app):
         l_status=l_status,
         l_stream=l_stream,
         l_stream_voice=l_stream_voice,
+        t_restart=t_restart,
+        t_device=t_device,
+        t_status=t_status,
     )
 
 
