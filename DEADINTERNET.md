@@ -910,7 +910,7 @@ for something you typed.
 When the chosen pin has an image and **Send pinned images to the model** is
 on, **the announcer describes it out loud**:
 
-> *"Okay, new topic by brandon: check this out. We're looking at an image. A
+> *"Okay, new topic by alice: check this out. We're looking at an image. A
 > dog wearing sunglasses on a skateboard."*
 
 That spoken line lands in the transcript, and the description is folded into
@@ -972,7 +972,7 @@ longest you wait is the rest of the current line, capped by the speech limit.
 
 By default the LLM context is wiped at each switch (a new topic on the old
 transcript drags the conversation backwards), and a speaker reads the handover
-out loud — *"Okay, new topic by brandon: the best pizza topping"* — using the
+out loud — *"Okay, new topic by alice: the best pizza topping"* — using the
 display name of whoever pinned it.
 
 ---
