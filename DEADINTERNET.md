@@ -65,7 +65,7 @@ systemctl is-active ollama
 **2. The app** — this also brings up tts-server:
 
 ```bash
-cd ~/Documents/qwentts.cpp && ./.venv-app/bin/python ./app.py
+cd ~/Documents/qwentts.cpp && ./run.sh
 ```
 
 Then open <http://127.0.0.1:7860>. The web UI is serving within a second or
@@ -75,16 +75,34 @@ it answers (roughly 30s for 23 voices). Watch the log on **Diagnostics** —
 dropdowns are empty; **Refresh voices** on the Testing tab repairs them at
 any time.
 
-To run it detached instead of holding a terminal:
+`run.sh` is the whole lifecycle:
 
-```bash
-cd ~/Documents/qwentts.cpp && nohup ./.venv-app/bin/python ./app.py >> app.log 2>&1 & disown
-```
+| | |
+| --- | --- |
+| `./run.sh` | run in this terminal |
+| `./run.sh -d` | detached — survives closing the terminal |
+| `./run.sh status` | app, tts-server (and its backend), whisper-server, VRAM |
+| `./run.sh logs` | follow `app.log` |
+| `./run.sh restart` | stop and start detached |
+| `./run.sh stop` | stop the app, **leave tts-server running** |
+| `./run.sh stop --all` | stop tts-server and whisper-server too |
+| `--fresh` | with start/restart: stop tts-server and unload Ollama first |
+| `-- <args>` | passed to `app.py`, e.g. `./run.sh -d -- --port 7870` |
 
-**The app writes `app.log` itself**, timestamped, rolling over at 8 MB. The
-redirection above is belt and braces for anything printed before the app is up —
-it is no longer what creates the log. Running in a terminal used to leave no
-record at all, which is exactly the run you want to read afterwards.
+Two defaults are deliberate. **`stop` leaves tts-server alone**, because a
+server that allocated on an empty card is the fast one and every app restart
+would otherwise gamble it — see *VRAM* above. `--fresh` is the opposite move,
+for when you want it reallocated properly. And **detached mode does not
+redirect into `app.log`**: the app writes that file itself *and* prints each
+line, so the `>> app.log` recipe this section used to give duplicated every
+entry. Console output goes to `app-console.log`, which only matters when
+something dies before logging is up.
+
+It finds running processes through `/proc` (argv and working directory), not a
+pidfile, so it sees an app however it was started — and cannot match itself,
+which `pkill -f app.py` does.
+
+**The app writes `app.log` itself**, timestamped, rolling over at 8 MB.
 
 Startup skips the launch if port 8080 already answers, so an app restart never
 stacks a second server on the card — and never disturbs a healthy one. Pass

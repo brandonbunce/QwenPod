@@ -36,6 +36,8 @@ music/
 app.log*
 tts-server.log*
 whisper-server.log*
+# run.sh -d sends stdout/stderr here: tracebacks from before logging is up
+app-console.log*
 
 # Local environment
 .venv-app/
