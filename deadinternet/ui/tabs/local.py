@@ -5,6 +5,7 @@ point of this output is that it has nothing to do with Discord.
 """
 import gradio as gr
 
+from ... import audiodev
 from ...events import VOICE
 from ..feedback import note, warn
 
@@ -45,30 +46,39 @@ def set_sink(app, name):
     return note(f"Output device set to **{label}**. Press Start local output.")
 
 
-def set_stream(app, enabled, voice):
-    """Turn the streaming voice on or off, or point it at someone else.
+def _mic_result(app, ok, msg):
+    """-> (device list, status line, action line), shared by the mic buttons.
 
-    Applied immediately when the local output is already running, because the
-    whole point is a voice you are about to talk through.
+    The device list is refreshed every time because making or removing the
+    virtual sink is exactly what changes it.
     """
-    s = app.state.settings
-    s.stream_tts = bool(enabled)
-    s.stream_tts_voice = (voice or "").strip()
+    app.events.add(VOICE, f"virtual mic - {msg}")
+    return (gr.update(choices=app.local_sink_choices()), audiodev.report(),
+            note(msg) if ok else warn(msg))
+
+
+def create_mic(app):
+    return _mic_result(app, *audiodev.create_mic())
+
+
+def remove_mic(app):
+    return _mic_result(app, *audiodev.remove_mic())
+
+
+def monitor_on(app):
+    return _mic_result(app, *audiodev.start_monitor(
+        volume=app.state.settings.local_monitor_volume))
+
+
+def monitor_off(app):
+    return _mic_result(app, *audiodev.stop_monitor())
+
+
+def set_monitor_volume(app, pct):
+    app.state.settings.local_monitor_volume = float(pct)
     app.state.save()
-    rt = app.runtime
-    if getattr(rt, "kind", "") != "local":
-        return note("Saved. It applies when the local output starts.")
-    if not s.stream_tts or not s.stream_tts_voice:
-        rt.close_stream()
-        return note("Streaming voice off - back to buffered synthesis.")
-    sp = app.state.get(s.stream_tts_voice)
-    if sp is None:
-        return warn(f"No speaker called {s.stream_tts_voice}.")
-    if not rt.open_stream(sp):
-        return warn(f"Could not open a streaming voice for {sp.name} - "
-                    "see the log. Buffered synthesis still works.")
-    app.events.add(VOICE, f"streaming voice: {sp.name}")
-    return note(f"Streaming as **{sp.name}**. First line loads the model.")
+    ok, msg = audiodev.set_monitor_volume(pct)
+    return note(msg) if ok else warn(msg)
 
 
 def restart_tts(app, device):

@@ -21,9 +21,9 @@ from typing import Optional, Tuple
 from .adbreak import AdBreak, segment_lines
 from .pipeline import GAP, NULL_PIPELINE
 from .audio import ack_pcm, normalize_wav, truncate_wav
-from . import websearch
+from . import comedy, websearch
 from .config import (MODE_INTERACTIVE, MODE_MANUAL, MODE_PODCAST, Pin, Turn,
-                     render_template)
+                     plain_md, render_template)
 
 
 @dataclass
@@ -43,6 +43,90 @@ class PreparedTopic:
     wav: Optional[bytes] = None
     built_at: float = field(default_factory=time.monotonic)
 
+# The stages of a topic switch, in the order they happen. See SwitchProgress.
+STEP_CUT = "cutting off the current line"
+STEP_WAIT = "letting the current line finish"
+STEP_BUILD = "preparing the topic"
+STEP_AD = "ad break"
+STEP_EVOLVE = "rewriting the cast"
+STEP_ANNOUNCE = "announcing it"
+
+
+class SwitchProgress:
+    """What a topic switch is doing right now, for the UI.
+
+    A switch is up to a minute of things that make no sound -- finding the
+    topic, a model call, synthesising the announcement, waiting out the
+    rewrites -- and from the outside that is indistinguishable from the app
+    having hung. This is the list of stages with a tick against the finished
+    ones and a clock on the current one, drawn above the topic queue.
+
+    Written from the loop thread and once from the UI thread (begin), read
+    from gradio's. Every write replaces a whole attribute, so a reader sees
+    the old list or the new one and never half of either.
+    """
+
+    # How long a finished switch stays on screen, so a fast one is still seen.
+    LINGER = 6.0
+
+    def __init__(self):
+        self.to = ""
+        self.steps = []         # [(label, "todo" | "now" | "done")]
+        self._step_at = 0.0
+        self._done_at = 0.0
+
+    @property
+    def active(self) -> bool:
+        return bool(self.steps) and not self._done_at
+
+    def begin(self, to: str, labels):
+        self.to, self._done_at = to, 0.0
+        self.steps = [(label, "todo") for label in labels]
+
+    def step(self, label: str):
+        """`label` is now happening; everything before it is finished."""
+        seen, out = False, []
+        for name, _ in self.steps:
+            if name == label:
+                seen = True
+                out.append((name, "now"))
+            else:
+                out.append((name, "todo" if seen else "done"))
+        if not seen:
+            out.append((label, "now"))
+        self.steps, self._step_at = out, time.monotonic()
+
+    def skip(self, label: str):
+        self.steps = [(n, st) for n, st in self.steps if n != label]
+
+    def end(self, to: str = ""):
+        self.to = to or self.to
+        self.steps = [(n, "done") for n, _ in self.steps]
+        self._done_at = time.monotonic()
+
+    def abandon(self):
+        self.steps, self._done_at = [], 0.0
+
+    def render(self) -> str:
+        if not self.steps:
+            return ""
+        now = time.monotonic()
+        if self._done_at:
+            if now - self._done_at > self.LINGER:
+                return ""
+            head = f"**Switched to:** {plain_md(self.to[:80])}"
+        else:
+            head = f"**Switching to:** {plain_md(self.to[:80]) or 'the next topic'}"
+        marks = {"done": "\u2713", "now": "\u25b6", "todo": "\u00b7"}
+        rows = []
+        for name, st in self.steps:
+            row = f"{marks[st]} {name}"
+            if st == "now":
+                row = f"**{row}** ({now - self._step_at:.0f}s)"
+            rows.append(row)
+        return head + "  \n" + "  \n".join(rows)
+
+
 # The 12 Hz codec emits 12.5 audio frames per second (24000 / 1920-sample hop),
 # which converts a seconds limit into the server's max_new_tokens frame count.
 FRAMES_PER_SECOND = 12.5
@@ -59,6 +143,23 @@ MANUAL_TOPIC_LINES = (
     "Right, moving on to this: {topic}\n"
     "New subject. {topic}"
 )
+
+# How many of the cast get a premise. It is one call listing everybody, and
+# past this the model starts dropping names and repeating itself; the rest of a
+# big roster simply plays the segment without one.
+PREMISE_CAST_MAX = 8
+# Bot lines between sweeps of the transcript for things worth calling back to,
+# and how many are remembered. Short of max_history on purpose, so nothing
+# scrolls out of the window unread.
+# How many topics' worth of premises to hold: the current one, the prefetched
+# next one, and one spare for a topic typed in between.
+PREMISES_KEPT = 3
+BITS_EVERY = 8
+BITS_KEPT = 12
+# Example lines shown per turn, out of however many the speaker has.
+SAMPLES_PER_TURN = 4
+# Search results opened per subject before moving on to the next subject.
+WEB_READ_ATTEMPTS = 3
 
 # An empty channel for longer than this and the conversation restarts rather
 # than resuming: whoever walks in would otherwise hear the tail of a
@@ -93,6 +194,24 @@ class Director:
         self.last_norm = {}
         self.last_truncate = {}
         self.last_stim = ""
+        # ---- comedy (see comedy.py) ----
+        self._moves = comedy.MoveDeck(self._rng)
+        # {topic: {speaker: what they want out of it}}, newest last. Looked up
+        # by the topic text on every line, so a topic that changes by any
+        # route -- rotation, the box on the Topic tab, a slash command -- gets
+        # its premises without each route having to remember to ask. Keyed
+        # rather than a single slot because the next topic's are written while
+        # the current one is still playing.
+        self._premise_bank = {}
+        self._premise_task: Optional[asyncio.Task] = None
+        # Things said earlier that are worth calling back to, oldest first.
+        # Deliberately survives a topic switch: a callback to something from
+        # two segments ago is the best kind.
+        self._bits = []
+        self._bits_task: Optional[asyncio.Task] = None
+        self._bits_since = 0
+        self.comedy_debug = {"move": "-", "takes": 0, "rerolled": 0,
+                             "lines": 0, "flags": "-", "segment": "-"}
         self._topic_deadline = None
         # Where in the transcript the current segment starts, so the break can
         # analyse exactly the turns that belong to the topic that just ended.
@@ -139,10 +258,15 @@ class Director:
         # results already fetched for each subject.
         self._web_subject_idx = 0
         self._web_results = {}
+        # Stories already used this session. The news feed answers the same
+        # query with much the same list an hour later, and without this every
+        # refill of a subject's queue replays the segment it opened with.
+        self._web_used = set()
         # Which source each prepared topic came from, for the queue display.
         self._last_source = ""
         # Set by the UI; consumed by the turn loop at a turn boundary.
         self._force_topic = False
+        self.switching = SwitchProgress()
         self.topic_debug = {"last_switch": None, "pins_seen": 0, "current": "",
                             "next_in": None, "last_error": None, "image": "-",
                             "channels": 0}
@@ -185,55 +309,256 @@ class Director:
     def _ensure_stim(self, text: str, stim: str, name: str) -> str:
         """Fall back to appending when the model ignored the tic, so a
         successful roll always actually fires."""
-        if re.search(re.escape(stim), text, re.I):
+        # Matched and appended without the stim's own punctuation: a tic saved
+        # as "barnacles!" is in the line when the model wrote "barnacles," and
+        # used to be appended a second time, as "barnacles!!".
+        core = stim.rstrip(" .!?,") or stim
+        if re.search(re.escape(core), text, re.I):
             self.last_stim = f"{name}: '{stim}' (in-line)"
             return text
         joined = text.rstrip()
         if joined and joined[-1] not in ".!?":
             joined += "."
         self.last_stim = f"{name}: '{stim}' (appended)"
-        return f"{joined} {stim}!".strip()
+        return f"{joined} {core}!".strip()
+
+    # ---- comedy -----------------------------------------------------------
+    def _roll_move(self, solo: bool):
+        """A comedic move for this turn, or None. Same arrangement as the
+        stims: rolled on the seeded RNG, so a fixed seed replays it."""
+        cfg = self.state.settings
+        if not cfg.moves_enabled:
+            return None
+        if self._rng.random() * 100.0 >= float(cfg.move_chance or 0.0):
+            return None
+        return self._moves.deal(cfg.moves_text, self._bits, solo)
+
+    def _premise_for(self, speaker) -> str:
+        """This character's angle on the current topic, if it is written yet.
+
+        Never waits. When none have been written for this topic the line goes
+        out without one, and _write_line starts them once the line is written
+        -- a line now beats a better line after a silence.
+        """
+        cfg = self.state.settings
+        if not cfg.premises_enabled:
+            return ""
+        return self._premise_bank.get(cfg.topic, {}).get(speaker.name, "")
+
+    def premises(self) -> dict:
+        """The current topic's premises, for the UI."""
+        return dict(self._premise_bank.get(self.state.settings.topic, {}))
+
+    def _premise_cast(self):
+        return self.state.active()[:PREMISE_CAST_MAX]
+
+    def _start_premises(self, topic: str):
+        if topic in self._premise_bank:
+            return
+        if self._premise_task and not self._premise_task.done():
+            return
+        cast = self._premise_cast()
+        if not cast or not (topic or "").strip():
+            return
+        loop = asyncio.get_running_loop()
+
+        async def run():
+            try:
+                found = await loop.run_in_executor(
+                    None, lambda: self.llm.write_premises(topic, cast))
+            except Exception as e:
+                self.log(f"[comedy] premises failed: {e}")
+                found = {}
+            # Banked even when empty, or a model that cannot write them would
+            # be asked again on every single line.
+            self._premise_bank[topic] = found
+            while len(self._premise_bank) > PREMISES_KEPT:
+                del self._premise_bank[next(iter(self._premise_bank))]
+            if found:
+                self.log(f"[comedy] premises for {len(found)} of {len(cast)}: "
+                         + " | ".join(f"{k}: {v[:60]}" for k, v in found.items()))
+
+        self._premise_task = asyncio.create_task(run())
+
+    def _collect_bits(self):
+        """Every few lines, sweep what was said for things to call back to.
+
+        Called once the next line is already being written, so on a single
+        Ollama queue this lands behind that call instead of in front of it and
+        is paid for during playback.
+        """
+        if not self.state.settings.bits_enabled:
+            return
+        self._bits_since += 1
+        if self._bits_since < BITS_EVERY:
+            return
+        if self._bits_task and not self._bits_task.done():
+            return
+        self._bits_since = 0
+        lines = [f"{t.speaker}: {t.text}"
+                 for t in self.state.recent(BITS_EVERY) if t.kind == "bot"]
+        have = list(self._bits)
+        loop = asyncio.get_running_loop()
+
+        async def run():
+            try:
+                new = await loop.run_in_executor(
+                    None, lambda: self.llm.extract_bits(lines, have))
+            except Exception as e:
+                self.log(f"[comedy] bits failed: {e}")
+                return
+            if new:
+                self._bits = (self._bits + new)[-BITS_KEPT:]
+                self.log(f"[comedy] remembered: {', '.join(new)}")
+
+        self._bits_task = asyncio.create_task(run())
+
+    def _worn_for(self, speaker, transcript):
+        """Phrases this speaker should stay off for one line.
+
+        Less the two kinds of repetition that are on purpose: their own stims,
+        and the names of the people they are talking to.
+        """
+        own = [t.text for t in transcript
+               if t.kind == "bot" and t.speaker == speaker.name]
+        spared = {w for st in speaker.stim_list() for w in comedy._words(st)}
+        spared |= {w for t in transcript for w in comedy._words(t.speaker)}
+        spared |= {w for s in self.state.active() for w in comedy._words(s.name)}
+        # Any overlap at all spares the phrase. Erring that way costs one
+        # repeated phrase; erring the other way forbids a character from
+        # saying the name of the person they are arguing with.
+        return [p for p in comedy.worn_phrases(own, limit=20)
+                if not set(p.split()) & spared][:5]
+
+    def _close_segment(self, turns):
+        """Log the numbers for the segment that just ended; see comedy.metrics."""
+        lines = [t.text for t in turns if getattr(t, "kind", "bot") == "bot"]
+        if len(lines) < 4:
+            return
+        report = comedy.format_metrics(comedy.metrics(lines))
+        self.comedy_debug["segment"] = report
+        self.log(f"[comedy] segment: {report}")
 
     # ---- production -----------------------------------------------------
+    async def _write_line(self, speaker, addressed_to=None) -> Optional[str]:
+        """The words for one turn: roll the comedy, write takes, pick one."""
+        loop = asyncio.get_running_loop()
+        cfg = self.state.settings
+        transcript = self.state.recent()
+        stim = self._roll_stim(speaker)
+        solo = len(self.state.active()) <= 1
+        # Not when answering a real person. They typed something to get an
+        # answer to it, and half the deck is ways of not giving one.
+        move = self._roll_move(solo) if addressed_to is None else None
+        premise = self._premise_for(speaker)
+        pool = speaker.voice_samples()
+        samples = (self._rng.sample(pool, SAMPLES_PER_TURN)
+                   if len(pool) > SAMPLES_PER_TURN else pool)
+        short = move is not None and move.short
+        num_predict = (min(cfg.num_predict, comedy.SHORT_NUM_PREDICT)
+                       if short else cfg.num_predict)
+        max_words = comedy.SHORT_MAX_WORDS if short else 0
+        heard = [t.text for t in transcript]
+        length, worn = "", []
+        if cfg.moves_enabled:
+            # Rhythm and wear ride along with the deck: they are the same idea
+            # -- code deciding what this line is not allowed to be.
+            if short:
+                length = comedy.LENGTH_SHORT
+            elif self._rng.random() * 100.0 < comedy.BRIEF_CHANCE:
+                length = comedy.LENGTH_BRIEF
+            else:
+                length = comedy.LENGTH_FULL
+            worn = self._worn_for(speaker, transcript)
+
+        def generate(img, label):
+            return self.llm.speak_as(
+                speaker, transcript, cfg.topic, addressed_to,
+                num_predict, cfg.temperature, stim, img, solo,
+                move=move, premise=premise, samples=samples,
+                script=cfg.script_framing, label=label,
+                length=length, avoid=worn,
+            )
+
+        async def take(n):
+            label = speaker.name if n == 0 else f"{speaker.name} (take {n + 1})"
+            image = self.topic_image if (cfg.topic_images and self._images_ok) else None
+            try:
+                return await loop.run_in_executor(None, lambda: generate(image, label))
+            except Exception as e:
+                if image is None:
+                    raise
+                # Almost always a text-only model rejecting the image payload.
+                # Drop it for the rest of the session rather than failing every
+                # turn until the topic rotates away.
+                self._images_ok = False
+                self.topic_debug["image"] = f"disabled - model rejected it ({str(e)[:80]})"
+                self.log(f"[topic] model rejected the image, falling back to text: {e}")
+                return await loop.run_in_executor(None, lambda: generate(None, label))
+
+        takes, flags = [], []
+        for n in range(max(1, int(cfg.line_takes or 1))):
+            try:
+                text = await take(n)
+            except Exception as e:
+                self.log(f"[director] llm failed for {speaker.name}: {e}")
+                break
+            if not text:
+                continue
+            takes.append(text)
+            flags = comedy.line_flags(text, heard, max_words, worn)
+            # A clean take plays at once; only the judge wants to see them all.
+            if not flags and not cfg.line_judge:
+                break
+        if not takes:
+            return None
+
+        if len(takes) == 1:
+            text = takes[0]
+        else:
+            # Least flagged first, so that is what plays if the judge fails.
+            takes.sort(key=lambda t: (len(comedy.line_flags(t, heard, max_words, worn)),
+                                      -comedy.specifics(t), len(t)))
+            clean = [t for t in takes
+                     if not comedy.line_flags(t, heard, max_words, worn)]
+            shortlist = clean if len(clean) > 1 else takes
+            pick = 0
+            if cfg.line_judge:
+                try:
+                    pick = await loop.run_in_executor(
+                        None, lambda: self.llm.judge_takes(
+                            speaker.name, transcript, shortlist))
+                except Exception as e:
+                    self.log(f"[comedy] judge failed: {e}")
+            text = shortlist[pick]
+
+        d = self.comedy_debug
+        d["lines"] += 1
+        d["takes"] = len(takes)
+        d["move"] = f"{speaker.name}: {move.text[:90]}" if move else f"{speaker.name}: -"
+        if len(takes) > 1:
+            d["rerolled"] += 1
+            d["flags"] = f"{speaker.name}: {', '.join(flags) or 'judge wanted a choice'}"
+        if short:
+            # Every take ignored the limit. Cut it, so a short move is short.
+            text = comedy.first_sentence(text)
+        if stim:
+            text = self._ensure_stim(text, stim, speaker.name)
+        if cfg.premises_enabled:
+            # Here rather than before the line: on a single Ollama queue a
+            # call started first is answered first, and this one is long.
+            # Started now, it runs while this line is synthesised and played.
+            self._start_premises(cfg.topic)
+        return text
+
     async def _produce(self, speaker, addressed_to=None) -> Optional[Tuple[str, str, bytes]]:
         """LLM line + synthesised audio for one speaker."""
         if speaker is None:
             return None
         loop = asyncio.get_running_loop()
-        cfg = self.state.settings
-        transcript = self.state.recent()
-        stim = self._roll_stim(speaker)
-        image = self.topic_image if (cfg.topic_images and self._images_ok) else None
-
-        solo = len(self.state.active()) <= 1
-
-        def generate(img):
-            return self.llm.speak_as(
-                speaker, transcript, cfg.topic, addressed_to,
-                cfg.num_predict, cfg.temperature, stim, img, solo,
-            )
-
-        try:
-            text = await loop.run_in_executor(None, lambda: generate(image))
-        except Exception as e:
-            if image is None:
-                self.log(f"[director] llm failed for {speaker.name}: {e}")
-                return None
-            # Almost always a text-only model rejecting the image payload.
-            # Drop it for the rest of the session rather than failing every
-            # turn until the topic rotates away.
-            self._images_ok = False
-            self.topic_debug["image"] = f"disabled - model rejected it ({str(e)[:80]})"
-            self.log(f"[topic] model rejected the image, falling back to text: {e}")
-            try:
-                text = await loop.run_in_executor(None, lambda: generate(None))
-            except Exception as e2:
-                self.log(f"[director] llm failed for {speaker.name}: {e2}")
-                return None
+        text = await self._write_line(speaker, addressed_to)
         if not text:
             return None
-        if stim:
-            text = self._ensure_stim(text, stim, speaker.name)
 
         try:
             wav = await loop.run_in_executor(None, lambda: self._synth(text, speaker.name))
@@ -455,6 +780,7 @@ class Director:
         loop = asyncio.get_running_loop()
         # Try each subject once before giving up, so one dead search does not
         # stall the whole source.
+        fallback = None
         for _ in range(len(subjects)):
             subject = subjects[self._web_subject_idx % len(subjects)]
             self._web_subject_idx += 1
@@ -462,16 +788,57 @@ class Director:
             if not queue:
                 found = await loop.run_in_executor(
                     None,
-                    lambda sub=subject: websearch.search(
+                    lambda sub=subject: websearch.find(
                         sub, int(s.web_results_per_search or 8), self.log))
-                queue = [r.as_topic() for r in found]
+                queue = [r for r in found if (r.url or r.title) not in self._web_used]
                 self._rng.shuffle(queue)
                 self._web_results[subject] = queue
-            if queue:
-                text = queue.pop(0)
-                return Pin(author="", text=text, channel=f"web:{subject}")
+            # A few results per subject, not the whole queue: every attempt is
+            # a page fetch and a model call, and the next subject is as good a
+            # topic as the fifth result of this one.
+            for _ in range(min(WEB_READ_ATTEMPTS, len(queue))):
+                result = queue.pop(0)
+                self._web_used.add(result.url or result.title)
+                fallback = fallback or (subject, result)
+                text = await loop.run_in_executor(
+                    None, lambda r=result, sub=subject: self._read_result(sub, r))
+                if text:
+                    return Pin(author="", text=text, channel=f"web:{subject}")
+        if fallback:
+            # Nothing could be opened -- offline apart from the search, or
+            # every site refused. A headline is a thin topic, but it is one,
+            # and the alternative is the source silently producing nothing.
+            subject, result = fallback
+            self.log(f"[web] nothing readable - falling back to a headline: "
+                     f"{result.title[:60]}")
+            return Pin(author="", text=result.as_topic(), channel=f"web:{subject}")
         self.topic_debug["last_error"] = "web search returned nothing"
         return None
+
+    def _read_result(self, subject, result) -> str:
+        """Open a search result and brief it. -> topic text, or "".
+
+        Blocking: a page fetch and a model call. Runs in the executor, from
+        the background topic build, so none of it is on air.
+        """
+        if not self.state.settings.web_read_articles:
+            return result.as_topic()
+        if not result.url:
+            return ""
+        article = websearch.read_article(result.url, self.log)
+        if article is None:
+            return ""
+        try:
+            brief = self.llm.brief_article(
+                subject, article.title or result.title, article.text)
+        except Exception as e:
+            self.log(f"[web] could not brief {result.url}: {e}")
+            return ""
+        if not brief:
+            self.log(f"[web] not a story: {result.url}")
+            return ""
+        self.log(f"[web] read {result.url} ({len(article.text)} chars) -> {brief[:80]}")
+        return brief
 
     def _next_crowd_topic(self) -> Optional[Pin]:
         """Oldest submission first -- whoever asked first gets heard first."""
@@ -573,9 +940,22 @@ class Director:
         return prep
 
     async def _prepare_announcement(self, prep, loop):
-        """Pick who reads the handover and synthesise it ahead of time."""
+        """Pick who reads the handover and synthesise it ahead of time.
+
+        Also where the cast's premises for the topic get started, since every
+        path through _build_topic ends here. Started, never awaited: "Switch
+        to this now" builds its topic inline with the channel waiting, and a
+        long model call in front of the announcement is exactly the silence
+        that reads as the app having frozen. Whatever is not written by the
+        time the topic is live is caught up behind its first line.
+        """
         s = self.state.settings
         pin = prep.pin
+        if s.premises_enabled and not prep.description:
+            # Not for a described image: the topic text the cast will see has
+            # the description folded in at switch time, so premises written
+            # now would be banked under a string nobody looks up.
+            self._start_premises(pin.label())
         if s.topic_announce:
             speaker = self._pick_next()
             if speaker is not None:
@@ -650,6 +1030,7 @@ class Director:
         # A hand-typed topic does not need a pin pool to switch to.
         if not self._source_weights() and not self._manual_next and not self._prepared:
             self.topic_debug["last_error"] = "no pin channels selected"
+            self.switching.abandon()
             return False
 
         now = time.monotonic()
@@ -667,7 +1048,16 @@ class Director:
 
         self._topic_deadline = now + s.topic_interval_minutes * 60
 
+        progress = self.switching
+        if not progress.active:
+            # A switch the timer started, or one made while stopped.
+            progress.begin(self._manual_next or "", self._switch_plan())
         prep, self._prepared = self._prepared, None
+        if prep is not None:
+            progress.skip(STEP_BUILD)
+        else:
+            progress.step(STEP_BUILD)
+            self.status = f"switching topic - {STEP_BUILD}"
         if prep is None:
             # Nothing ready -- either the timer beat the prefetch or this is a
             # forced switch. Build it inline; the channel waits, but only this
@@ -681,7 +1071,9 @@ class Director:
             if prep is None:
                 prep = await self._build_topic()
         if prep is None:
+            progress.abandon()
             return False
+        progress.to = prep.pin.label()
 
         # ---- the break -------------------------------------------------
         # Ordered so the ad covers the rewriting. Both need the segment that
@@ -692,6 +1084,7 @@ class Director:
             turns = segment_lines(self.state.transcript, self._topic_start)
         roster = self.state.active()
         evolving = None
+        self._close_segment(turns)
 
         # Only close out a segment that happened. Two reasons, both from
         # pressing "Switch topic now":
@@ -709,6 +1102,10 @@ class Director:
             # nor someone typing counts as the hosts having had a conversation.
             self.log("[adbreak] nothing to close out - going straight to the topic")
             turns = []
+        if not (s.adbreak_enabled and turns):
+            progress.skip(STEP_AD)
+        if not (s.evolve_enabled and turns):
+            progress.skip(STEP_EVOLVE)
 
         try:
             if s.evolve_enabled and turns:
@@ -717,9 +1114,11 @@ class Director:
                 evolving = asyncio.create_task(
                     self.adbreak.evolve(outgoing_topic, turns))
             if s.adbreak_enabled and turns:
+                progress.step(STEP_AD)
                 self.status = "ad break"
                 await self.adbreak.play(outgoing_topic, turns, roster)
             if evolving is not None:
+                progress.step(STEP_EVOLVE)
                 self.status = "rewriting the cast"
                 n = await asyncio.wait_for(
                     asyncio.shield(evolving), s.evolve_timeout_seconds)
@@ -778,7 +1177,11 @@ class Director:
             # Keyed off the pin, not off whether we managed to load the image:
             # the people in the channel can see the pin either way, so an
             # image that failed to download still needs calling out.
+            progress.step(STEP_ANNOUNCE)
             await self._announce_topic(prep)
+        else:
+            progress.skip(STEP_ANNOUNCE)
+        progress.end(topic)
 
         # Line up the one after this while the conversation carries on.
         self._start_prepare()
@@ -882,6 +1285,7 @@ class Director:
         """Fresh RNG and empty the bag, so the next cycle is a new order."""
         self.rng_seed = int(seed) if seed else secrets.randbits(64)
         self._rng = random.Random(self.rng_seed)
+        self._moves = comedy.MoveDeck(self._rng)
         self._topic_bag = []
         self._last_pin = None
         self.topic_debug["bag"] = []
@@ -905,8 +1309,15 @@ class Director:
                 self._maybe_rotate_topic(force=True), self.runtime.loop)
             return fut.result(60), ""
 
+        # Begun here, on the UI thread, so the list is on screen by the next
+        # feed tick instead of whenever the turn loop comes back round.
+        instant = self.state.settings.topic_switch_instant
+        self.switching.begin(self._manual_next or "",
+                             [STEP_CUT if instant else STEP_WAIT]
+                             + self._switch_plan())
+        self.switching.step(STEP_CUT if instant else STEP_WAIT)
         self._force_topic = True
-        if not self.state.settings.topic_switch_instant:
+        if not instant:
             return False, "queued - switching once the current line finishes"
 
         # Instant: cut the speaker off mid-sentence, bin the line that was
@@ -918,6 +1329,23 @@ class Director:
         self._cancel_inflight()
         self.runtime.interrupt()
         return False, "switching now - cutting the current line off"
+
+    def _switch_plan(self):
+        """The stages a switch is expected to go through, given the settings.
+
+        A guess made before the switch knows everything -- whether there was a
+        segment to close out, for one -- so stages that turn out not to apply
+        are dropped from the list as it goes rather than ticked.
+        """
+        s = self.state.settings
+        plan = [STEP_BUILD]
+        if s.adbreak_enabled:
+            plan.append(STEP_AD)
+        if s.evolve_enabled:
+            plan.append(STEP_EVOLVE)
+        if s.topic_announce:
+            plan.append(STEP_ANNOUNCE)
+        return plan
 
     def _cancel_inflight(self):
         """Abandon work that belongs to the topic we are leaving.
@@ -962,6 +1390,8 @@ class Director:
         self.state.clear_transcript()
         self._drop_pending = True
         self._last_speaker = None
+        # A callback to something the cast can no longer see is a non sequitur.
+        self._bits = []
         return "LLM context cleared."
 
     def _take_pending_user(self) -> Optional[Turn]:
@@ -1016,40 +1446,6 @@ class Director:
         finally:
             self._over_tasks.discard(task)
 
-    async def _try_stream(self, item):
-        """Speak one line through the resident streamer. -> did it.
-
-        Returns False for anything it does not handle -- no streamer, a
-        different speaker, a failure -- and the buffered path takes over.
-        """
-        stream = getattr(self.runtime, "stream", None)
-        if stream is None or not stream.alive():
-            return False
-        if item is None:
-            try:
-                item = self._manual_q.get_nowait()
-            except asyncio.QueueEmpty:
-                return False
-        name, text = item
-        if name != stream.voice:
-            # Not ours: put it back so the normal path speaks it, in order.
-            self._manual_q.put_nowait(item)
-            return False
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        seconds = await loop.run_in_executor(
-            None, lambda: self.runtime.stream_say(text))
-        if seconds is None:
-            self._manual_q.put_nowait(item)
-            return False
-        self._last_speaker = name
-        self.state.add_turn(Turn(speaker=name, text=text))
-        # say() returns when generation finishes, which is well before the
-        # audio has finished leaving the sound card. Wait out the difference so
-        # the next line does not land on top of this one.
-        await asyncio.sleep(max(0.0, seconds - (loop.time() - started)))
-        return True
-
     def _synth_task(self, name: str, text: str):
         """Start synthesising a line without waiting for it. -> task or None."""
         speaker = self.state.get(name)
@@ -1081,15 +1477,6 @@ class Director:
         One line of lookahead, not a drain: the loop still gets to come round
         and do everything else between clips.
         """
-        # The streaming voice, when this line is for the speaker it holds
-        # open. It starts talking in ~0.06s instead of after the whole clip is
-        # rendered, so it deliberately jumps ahead of the lookahead below --
-        # there is nothing to prefetch when there is nothing to wait for.
-        if self._manual_ready is None:
-            spoken = await self._try_stream(item)
-            if spoken:
-                return
-
         ready, self._manual_ready = self._manual_ready, None
         if ready is None:
             if item is None:
@@ -1168,7 +1555,13 @@ class Director:
                 if mode != MODE_MANUAL:
                     forced, self._force_topic = self._force_topic, False
                     self._switch_now = False
-                    await self._maybe_rotate_topic(force=forced)
+                    try:
+                        await self._maybe_rotate_topic(force=forced)
+                    except BaseException:
+                        # Or the list sits there with a clock running on a
+                        # stage that died, which is worse than no list.
+                        self.switching.abandon()
+                        raise
 
                 # A context clear, barge-in, or topic switch invalidates
                 # anything already queued.
@@ -1231,6 +1624,7 @@ class Director:
                         self.state.clear_transcript()
                         self._last_speaker = None
                         self._opened = False
+                        self._bits = []
 
                 roster = self.state.active()
                 if not roster:
@@ -1292,6 +1686,8 @@ class Director:
                 # Exposed so an instant topic switch can cancel it from the
                 # UI thread rather than waiting for it to land.
                 self._pre_task = pre_task
+                # After the pre-generation, so it queues behind that.
+                self._collect_bits()
 
                 await self._speak(name, text, wav)
 
@@ -1388,6 +1784,7 @@ class Director:
     def stop(self):
         self.running = False
         self.status = "stopping"
+        self.switching.abandon()
         # Cancel the half-finished next turn, or the loop would sit waiting
         # for an LLM round trip before it could exit and sign off.
         self._cancel_inflight()

@@ -24,11 +24,12 @@ from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
                                  PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
                                  VRAM_WARN_FRACTION, State, gpu_busy_percent,
-                                 load_env, vram_info)
+                                 load_env, plain_md, vram_info)
+from deadinternet import comedy
 from deadinternet.events import EventLog
 from deadinternet.director import Director
 from deadinternet.llm import (PROVIDER_OLLAMA, PROVIDER_OPENAI, OllamaClient,
-                              OpenAIClient)
+                              OpenAIClient, sampling_options)
 from deadinternet.local import LocalRuntime, available as local_available
 from deadinternet.local import sinks as local_sinks
 from deadinternet.pipeline import Pipeline
@@ -106,6 +107,7 @@ class DeadInternetApp:
             # shared and long-lived, so rebuild_llm() is what makes a settings
             # change take effect without restarting the app.
             client.think = s.thinking
+            client.sampling = sampling_options(s)
         # Attaching the tap is the whole of what turns streaming on; the null
         # one leaves both providers on their original buffered request.
         client.tap = self.raw if s.raw_feed else NULL_TAP
@@ -525,11 +527,46 @@ class DeadInternetApp:
         self.runtime = None
         self.director = None
 
+    def active_output(self):
+        """Which output is live right now: "discord", "local" or "".
+
+        Discord counts from the moment the bot is logged in, not just while it
+        is in a voice channel -- a connected bot is still taking /sayas and
+        chat, and pulling the runtime out from under it would be a surprise.
+        """
+        rt = self.runtime
+        if self.bot_ready():
+            return "discord"
+        if getattr(rt, "kind", "") == "local" and rt.connected():
+            return "local"
+        return ""
+
+    def bot_ready(self):
+        """Is the Discord bot logged in? Safe whatever holds the runtime slot:
+        the local output has no `client` at all."""
+        rt = self.runtime
+        return (getattr(rt, "kind", "") == "discord"
+                and rt.client is not None and rt.client.is_ready())
+
+    def disconnect_discord(self):
+        """Log the bot out and free the runtime slot. -> (ok, message)."""
+        if getattr(self.runtime, "kind", "") != "discord":
+            return False, "The bot is not connected."
+        self.stop_output()
+        self._channels = []
+        self._text_channels = []
+        return True, "Bot disconnected. Local output can be started now."
+
     def start_local(self):
         """Bring up local audio output. -> (ok, message)."""
         why = local_available()
         if why:
             return False, f"**Local output unavailable** - {why}"
+        if self.active_output() == "discord":
+            # Refused rather than swapped: one output at a time, and switching
+            # should be something you meant to do, not a side effect.
+            return False, ("**The Discord bot is connected.** Press "
+                           "*Disconnect* under Discord first.")
         s = self.state.settings
         if (self.runtime is not None
                 and getattr(self.runtime, "kind", "") == "local"
@@ -540,9 +577,21 @@ class DeadInternetApp:
                 self.stop_output()
             else:
                 return True, f"Already playing to **{s.local_sink or 'system default'}**."
-        # One output at a time -- the director holds a single runtime.
+        # One output at a time -- the director holds a single runtime. Only a
+        # dead runtime (a Discord login that failed) can still be here.
         if self.runtime is not None:
             self.stop_output()
+
+        if s.local_sink and s.local_sink not in {name for name, _ in local_sinks()}:
+            # Refused rather than started. paplay exits at once on a device
+            # that does not exist and the show carries on in silence, with
+            # "output ready" in the log -- and a null sink made with pactl is
+            # gone after every reboot, so this is the normal way to get here.
+            self.log(f"[local] no such output device: {s.local_sink}")
+            return False, (
+                f"**No output device called `{s.local_sink}`.** A virtual sink "
+                "does not survive a reboot - press *Create* under *Virtual microphone* "
+                "on this tab, or pick another device, then press this again.")
 
         runtime = LocalRuntime(sink=s.local_sink, log=self.log, settings=s)
         self._attach(runtime)
@@ -553,12 +602,6 @@ class DeadInternetApp:
             return False, f"**Local output failed** - {err}"
         s.output = OUTPUT_LOCAL
         self.state.save()
-        if s.stream_tts and s.stream_tts_voice:
-            voice = self.state.get(s.stream_tts_voice)
-            if voice is None:
-                self.log(f"[stream] no speaker called {s.stream_tts_voice}")
-            elif not runtime.open_stream(voice):
-                self.log("[stream] falling back to buffered synthesis")
         return True, (f"Local output ready, playing to "
                       f"**{s.local_sink or 'system default'}**. "
                       "Press Start on the Run tab.")
@@ -571,14 +614,17 @@ class DeadInternetApp:
         token = os.environ.get("DISCORD_TOKEN")
         if not token:
             return False, self.discord_hint()
-        if self.runtime and self.runtime.client.is_ready():
+        if self.active_output() == "local":
+            return False, ("**Local output is playing.** Press *Stop* under "
+                           "This machine first.")
+        if self.bot_ready():
             self._channels = self.runtime.voice_channels()
             self._text_channels = self.runtime.text_channels()
             return True, f"Already connected as `{self.runtime.client.user}`."
 
         from deadinternet.bot import DiscordRuntime
 
-        # Local output holds the single runtime slot, so it must go first.
+        # A stopped local runtime can still hold the slot; clear it.
         if self.runtime is not None and getattr(self.runtime, "kind", "") != "discord":
             self.stop_output()
         self._attach(DiscordRuntime(token, log=self.log,
@@ -713,7 +759,7 @@ class DeadInternetApp:
         return "\n".join(f"- **{k}**: {v}" for k, v in rows)
 
     def join(self, label):
-        if not self.runtime or not self.runtime.client.is_ready():
+        if not self.bot_ready():
             return "Connect the bot first."
         cid = self._channel_id(label)
         if cid is None:
@@ -742,7 +788,7 @@ class DeadInternetApp:
     def persona_progress(self, handle):
         """Kick off a history scan. Returns (future, progress_dict) so the UI
         can stream progress instead of blocking for minutes."""
-        if not self.runtime or not self.runtime.client.is_ready():
+        if not self.bot_ready():
             raise RuntimeError("Connect the bot on the Outputs tab first.")
         if not (handle or "").strip():
             raise RuntimeError("Enter a Discord handle.")
@@ -975,6 +1021,30 @@ class DeadInternetApp:
             ("last channel", stats.get("last_channel") or "-"),
             ("last routing", d.get("last_router") or "-"),
             ("last drop reason", d.get("last_drop") or "-"),
+        ]
+        return "\n".join(f"- **{k}**: {v}" for k, v in rows)
+
+    def comedy_report(self):
+        """Markdown block for the comedy debug panel; see deadinternet/comedy.py."""
+        d = self.director
+        if not d or not d.comedy_debug.get("lines"):
+            return "_(nothing said yet)_"
+        c = d.comedy_debug
+        with self.state.lock:
+            live = [t.text for t in self.state.transcript[d._topic_start:]
+                    if t.kind == "bot"]
+        # Everything below is model output built from Discord and web text.
+        premises = " | ".join(f"{plain_md(k)}: {plain_md(v)}"
+                              for k, v in d.premises().items())
+        rows = [
+            ("last move", plain_md(c.get("move") or "-")),
+            ("takes of the last line", c.get("takes", 0)),
+            ("lines re-rolled", f"{c.get('rerolled', 0)} of {c.get('lines', 0)}"),
+            ("last re-roll because", plain_md(c.get("flags") or "-")),
+            ("this segment so far", comedy.format_metrics(comedy.metrics(live))),
+            ("last finished segment", c.get("segment") or "-"),
+            ("premises", premises or "-"),
+            ("remembered bits", plain_md(", ".join(d._bits)) or "-"),
         ]
         return "\n".join(f"- **{k}**: {v}" for k, v in rows)
 

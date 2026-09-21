@@ -24,6 +24,7 @@ class DiagnosticsPanel:
     chat: Any
     norm: Any
     topic: Any
+    comedy: Any
     services: Any
     log: Any
     log_clear: Any
@@ -36,17 +37,24 @@ class OutputsPanel:
     d_channel: Any
     d_join: Any
     d_leave: Any
+    d_disconnect: Any
     l_start: Any
     l_stop: Any
     l_sink: Any
     l_refresh: Any
-    l_status: Any
-    l_stream: Any
-    l_stream_voice: Any
+    v_create: Any
+    v_remove: Any
+    v_mon_on: Any
+    v_mon_off: Any
+    v_volume: Any
+    v_status: Any
+    m_norm: Any
+    m_dbfs: Any
+    m_cap_on: Any
+    m_cap_sec: Any
     t_restart: Any
     t_stop: Any
     t_device: Any
-    t_status: Any
 
 
 @dataclass(frozen=True)
@@ -107,6 +115,8 @@ class SpeakersPanel:
     s_persona: Any
     s_dynamic: Any
     s_reset_dynamic: Any
+    s_sharpen: Any
+    s_samples: Any
     s_stims: Any
     s_stim_pct: Any
     s_save: Any
@@ -133,6 +143,7 @@ class TopicPanel:
     w_web: Any
     web_subjects: Any
     web_n: Any
+    web_read: Any
     w_crowd: Any
     crowd_pending: Any
     m_seed: Any
@@ -162,13 +173,21 @@ class BehaviourPanel:
     m_temp: Any
     m_pred: Any
     m_hist: Any
-    m_norm: Any
-    m_dbfs: Any
-    m_cap_on: Any
-    m_cap_sec: Any
     m_evolve: Any
     m_evolve_max: Any
     m_evolve_wait: Any
+    m_evolve_chars: Any
+    m_evolve_think: Any
+    m_moves: Any
+    m_move_pct: Any
+    m_moves_text: Any
+    m_premises: Any
+    m_bits: Any
+    m_script: Any
+    m_takes: Any
+    m_judge: Any
+    m_min_p: Any
+    m_rep_pen: Any
     m_adbreak: Any
     m_ad_gain: Any
     m_ad_prompt: Any

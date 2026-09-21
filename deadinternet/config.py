@@ -166,8 +166,9 @@ HELP = {
         "sounds like people talking. The next line is generated during playback, "
         "so this is pacing only - it does not add latency.",
     "temperature":
-        "Randomness of the wording. Below ~0.7 personas get repetitive and bland; "
-        "above ~1.1 they start losing the thread mid-sentence.",
+        "Randomness of the wording. Below ~0.7 personas get repetitive and bland. "
+        "With min-p at 0 they start losing the thread above ~1.1; with min-p on, "
+        "1.1-1.3 stays coherent and is noticeably less predictable.",
     "num_predict":
         "Length cap per utterance, in tokens. Roughly 80 = two spoken sentences. "
         "Lines cut off by the cap are trimmed back to the last complete sentence, "
@@ -176,6 +177,10 @@ HELP = {
         "How many previous turns each speaker sees. Higher keeps the thread but "
         "grows every prompt, so turns take longer and the LLM costs more.",
 }
+
+
+# A quoted sample message inside a mined persona; see Speaker.voice_samples.
+_QUOTED = re.compile(r'^\s*-\s*"(.+)"\s*$', re.M)
 
 
 @dataclass
@@ -202,6 +207,13 @@ class Speaker:
     stims: str = ""
     # Percentage of this speaker's turns that carry a stim.
     stim_chance: float = 0.0
+    # Things this character would say, verbatim, one per line. A few are shown
+    # to the model every turn as examples of the voice -- at this model size a
+    # handful of real lines does more than any amount of description. Kept
+    # apart from the persona on purpose: evolution rewrites the persona, and a
+    # rewrite summarises examples into adjectives, which is how a character
+    # with a voice becomes a character with a description of one.
+    sample_lines: str = ""
 
     def system_prompt(self) -> str:
         """What the model is actually told to be, this turn.
@@ -215,6 +227,24 @@ class Speaker:
     def stim_list(self):
         raw = (self.stims or "").replace(",", "\n")
         return [p.strip() for p in raw.split("\n") if p.strip()]
+
+    def voice_samples(self):
+        """Example lines to show the model, or [] when the prompt in use
+        already carries them.
+
+        Personas built from Discord history quote the messages they were built
+        from, as `- "..."` lines. Those are read as samples too, so a character
+        mined before sample_lines existed keeps its voice once it evolves --
+        the evolved prompt has no quotes in it, and used to simply lose them.
+        """
+        lines = [ln.strip() for ln in (self.sample_lines or "").splitlines()
+                 if ln.strip()]
+        if lines:
+            return lines
+        if not (self.dynamic_persona or "").strip():
+            # The base prompt is what the model is reading, quotes and all.
+            return []
+        return _QUOTED.findall(self.persona or "")
 
 
 @dataclass
@@ -280,6 +310,20 @@ def render_template(template: str, rng=None, **values) -> str:
     return re.sub(r"\s{2,}", " ", line).strip()
 
 
+_MD_ACTIVE = re.compile(r"([\\`*_\[\]()<>!|#~])")
+
+
+def plain_md(text) -> str:
+    """Text from outside, made inert for a gr.Markdown box.
+
+    Topics come from Discord users and web results, and model output is built
+    out of them. Gradio strips HTML but renders markdown, and markdown can
+    make the operator's browser fetch an image from anywhere -- so whatever
+    arrives is shown as the characters it is made of.
+    """
+    return _MD_ACTIVE.sub(r"\\\1", " ".join(str(text or "").split()))
+
+
 @dataclass
 class Pin:
     """A pinned message eligible to become the topic.
@@ -328,18 +372,10 @@ class Settings:
     output: str = OUTPUT_DISCORD
     # Which sink to play into. Empty is the system default.
     local_sink: str = ""
-    # Speak one chosen voice through a resident qwen-tts that emits audio as it
-    # decodes, instead of rendering the whole clip first. Measured on a
-    # nine-second line: 0.06s to the first sample against 2.21s buffered. One
-    # process is one voice -- the reference clip is fixed at startup -- so this
-    # is for the microphone, not for the 33-speaker show. Off by default: it
-    # holds a second copy of the model, about 3.4 GB.
-    stream_tts: bool = False
-    stream_tts_voice: str = ""
-    # Learned from the audio the streamer actually produces and written
-    # back when it closes, so a restart starts level. See streamtts.TARGET_RMS.
-    stream_tts_gain: float = 1.0
-    tts_cli_binary: str = "build/qwen-tts"
+    # How loud you hear the cast through the virtual microphone's monitor, in
+    # percent. Only the monitor's own stream changes; anything recording the
+    # microphone still gets the full level.
+    local_monitor_volume: float = 100.0
     # Which backend tts-server comes up on. The same binary does both: an
     # empty GGML_VK_VISIBLE_DEVICES hides the GPU from ggml and it falls back
     # to CPU, so there is nothing to rebuild to switch.
@@ -379,6 +415,44 @@ class Settings:
     # Let the LLM reason before answering (Ollama's `think`). Off by default:
     # it costs seconds per line, which is dead air in a live call.
     thinking: bool = False
+    # ---- comedy ----
+    # See deadinternet/comedy.py for why these exist. Each is independent, and
+    # each costs what its comment says it costs.
+    #
+    # Deal one concrete comedic move per turn instead of asking for "a joke".
+    # Free: it is a sentence in the system prompt.
+    moves_enabled: bool = True
+    # Share of turns that get one. Not 100: a cast that is always doing a bit
+    # has nobody left to react to it.
+    move_chance: float = 70.0
+    # One move per line. Blank uses comedy.DEFAULT_MOVES, stored blank for the
+    # same reason adbreak_prompt is.
+    moves_text: str = ""
+    # Give each character a stake in the topic and somebody to disagree with,
+    # written once per topic. One call, made while the previous topic is still
+    # playing, so it is not heard.
+    premises_enabled: bool = True
+    # How many takes of a line may be written before one is played. A take the
+    # line filter has no complaint about is played at once, so a clean first
+    # take costs nothing extra; only a flagged one is re-rolled.
+    line_takes: int = 3
+    # Always write every take and have the model pick. Better lines, and
+    # line_takes + 1 calls for every one of them.
+    line_judge: bool = False
+    # Remember specific things that were said, so they can be called back to
+    # long after they have scrolled out of max_history. One small call every
+    # few turns, queued behind the next line rather than in front of it.
+    bits_enabled: bool = True
+    # Show the conversation as a script to be continued, rather than as chat
+    # turns to be answered. Chat turns are what an assistant is trained on;
+    # a script is what fiction looks like.
+    script_framing: bool = False
+    # Sampling, Ollama only. min_p drops tokens less likely than this fraction
+    # of the top one, which is what lets temperature go above 1 without the
+    # line falling apart mid-sentence. 0 leaves Ollama's own top_p/top_k alone.
+    min_p: float = 0.08
+    # Penalises tokens already in the context. 1.0 is off.
+    repeat_penalty: float = 1.1
     # Show the model's raw output in the Run tab as it arrives. Costs a
     # streaming request instead of a buffered one, which is why it is a
     # setting at all -- turning it off puts both providers back on the exact
@@ -402,6 +476,17 @@ class Settings:
     # show carries on and the results land whenever they land -- they take
     # effect on the next turn either way, and dead air is worse.
     evolve_timeout_seconds: float = 60.0
+    # How long an evolved prompt may get. Every rewrite wants to add and none
+    # wants to drop, so without a budget each character climbs to the hard
+    # ceiling and stays there. A sheet over this is condensed on its next
+    # rewrite -- including ones that grew before the setting existed. Never
+    # forces a character below the length of the base you wrote; see
+    # llm.persona_budget.
+    evolve_max_chars: int = 600
+    # Reason before rewriting. Separate from `thinking`, which is about spoken
+    # lines. Off by default because it was measured to be most of the cost of
+    # a break for no visible gain -- see BaseLLM.evolve_persona.
+    evolve_think: bool = False
 
     # A sponsor read over a music bed, between segments. Also the cover for
     # however long the rewrites above take.
@@ -495,6 +580,10 @@ class Settings:
     # walked round-robin too, so a subject is not exhausted before moving on.
     web_subjects: str = ""
     web_results_per_search: int = 8
+    # Open the result and have the model brief what it says, rather than using
+    # the search page's title and snippet as the topic. Off is the old
+    # behaviour: no page fetch and no model call, and nothing to talk about.
+    web_read_articles: bool = True
     # Topics people submitted with /topics in Discord, oldest first.
     crowd_topics: List[str] = field(default_factory=list)
     crowd_max: int = 100

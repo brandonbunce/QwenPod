@@ -17,6 +17,7 @@ import time
 from .audio import bed_under
 from .config import Turn, music_tracks, render_template
 from .events import RUN, VOICE
+from .llm import persona_budget
 
 
 def segment_lines(transcript, start):
@@ -46,17 +47,37 @@ def lines_by_speaker(turns):
     return out
 
 
+# Fewer lines than this is not a pattern, it is a remark. Rewriting a character
+# from one sentence costs a model call and can only add noise -- whatever they
+# said gets promoted to a trait because there is nothing else to go on.
+MIN_LINES_TO_EVOLVE = 2
+
+
 def pick_for_evolution(state, said, limit):
     """Which speakers to rewrite this break, longest-unevolved first.
 
     Only speakers who actually spoke are candidates -- there is nothing to
-    analyse otherwise. Ordering by how long ago each was last rewritten means a
-    quiet character still comes round instead of being permanently starved by
+    analyse otherwise -- and only those who said enough to show a tendency.
+    The exception is a sheet that is over its size budget: that one is worth
+    a call whatever was said, because the rewrite is what shrinks it, and it
+    goes to the front so a backlog of bloated sheets clears in a few breaks
+    rather than whenever rotation gets round to each.
+
+    Otherwise ordered by how long ago each was last rewritten, so a quiet
+    character still comes round instead of being permanently starved by
     whoever talks most.
     """
     stamps = state.evolve_stamps
-    names = [n for n in said if state.get(n)]
-    names.sort(key=lambda n: (stamps.get(n, 0.0), n))
+    cap = state.settings.evolve_max_chars
+
+    def over(n):
+        sp = state.get(n)
+        dyn = (sp.dynamic_persona or "").strip()
+        return len(dyn) > persona_budget(sp.persona, cap)
+
+    names = [n for n in said if state.get(n)
+             and (len(said[n]) >= MIN_LINES_TO_EVOLVE or over(n))]
+    names.sort(key=lambda n: (not over(n), stamps.get(n, 0.0), n))
     return names[:max(0, int(limit))]
 
 
@@ -222,7 +243,9 @@ class AdBreak:
             try:
                 new = await loop.run_in_executor(
                     None, lambda sp=sp, name=name: self.llm.evolve_persona(
-                        name, sp.persona, sp.dynamic_persona, said[name], topic))
+                        name, sp.persona, sp.dynamic_persona, said[name], topic,
+                        s.evolve_max_chars, s.evolve_think,
+                        sp.stim_list()))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -241,7 +264,8 @@ class AdBreak:
                 live.dynamic_persona = new
                 self.state.evolve_stamps[name] = time.time()
             changed += 1
-            self.log(f"[evolve] {name}: {new[:80]}")
+            was = len((sp.dynamic_persona or sp.persona or "").strip())
+            self.log(f"[evolve] {name} ({was} -> {len(new)} chars): {new[:80]}")
             if self.events:
                 self.events.add(VOICE, f"{name} evolved: {new}")
 

@@ -11,6 +11,7 @@ construct a component at import time.
 """
 import gradio as gr
 
+from .. import audiodev
 from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
                          HeaderPanel, OutputsPanel, RunPanel, SpeakersPanel,
                          TopicPanel)
@@ -20,6 +21,7 @@ from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
 from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
                       RECOMMENDED, TTS_DEVICES)
+from ..comedy import DEFAULT_MOVES
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
 
 # Why a restart button exists at all. The state it recovers from is invisible
@@ -41,36 +43,17 @@ TTS_HINT = (
     "above."
 )
 
-# The recipe for turning the local output into something other applications can
-# select as a microphone. Spelled out rather than linked: it is two commands,
-# and the whole point of the local output for most people.
-LOCAL_HINT = (
-    "To feed this into a game, voice client or anything else that records a "
-    "microphone, make a virtual one and point this at it:\n\n"
-    "```\n"
-    "pactl load-module module-null-sink sink_name=qwenpod \\\n"
-    "    sink_properties=device.description=QwenPod_Output\n"
-    "pactl load-module module-remap-source master=qwenpod.monitor \\\n"
-    "    source_name=qwenpod_mic "
-    "source_properties=device.description=QwenPod_Microphone\n"
-    "```\n\n"
-    "Then pick **qwenpod** above and **QwenPod_Microphone** as the input "
-    "device in the other application. Press *Refresh devices* after creating "
-    "it.\n\n"
-    "**To hear it yourself**, loop the sink's monitor back to your speakers. A "
-    "null sink has no output of its own, so without this you go deaf to "
-    "everything you are sending:\n\n"
-    "```\n"
-    "pactl load-module module-loopback source=qwenpod.monitor latency_msec=60\n"
-    "```\n\n"
-    "Leaving out `sink=` is deliberate - it attaches to whatever your *default* "
-    "output is, and follows it when you change devices. The game still gets a "
-    "clean copy; monitoring takes nothing away from it, and the loopback shows "
-    "up in `pavucontrol` as its own stream so you can turn your monitor down "
-    "without touching what anyone else hears. On Bluetooth keep the latency at "
-    "60ms or so; wired can go to 20.\n\n"
-    "None of these modules survive a reboot. `pactl unload-module <id>` removes "
-    "one, newest first."
+# What the virtual microphone is for. The pactl commands behind the buttons are
+# in DEADINTERNET.md for anyone who would rather run them by hand.
+MIC_HINT = (
+    "Turns this machine's output into an **input** any game or voice client "
+    f"can select. *Create* makes a virtual device; pick **{audiodev.SINK}** as "
+    f"the output device above and **{audiodev.SOURCE_DESC}** as the microphone "
+    "in the other application.\n\n"
+    "A virtual device has no speakers, so you go deaf to what you are sending. "
+    "*Monitor* echoes it to your default output as its own stream - turn it "
+    "down here or in `pavucontrol` without changing what anyone else hears. "
+    "None of this survives a reboot; press *Create* again."
 )
 
 
@@ -118,79 +101,119 @@ def build_diagnostics(app):
             gr.Markdown("**Topic rotation**")
             topic = gr.Markdown("_(rotation off)_", height=150, container=True,
                                 elem_classes=["status-box"])
+            gr.Markdown(
+                "**Comedy** — what the last line was told to do, and how the "
+                "last segment measured. The numbers are proxies: none of them "
+                "is *funny*, but each is something a dull transcript gets wrong."
+            )
+            comedy = gr.Markdown("_(nothing said yet)_", height=150, container=True,
+                                 elem_classes=["status-box"])
 
     return DiagnosticsPanel(voice=voice, chat=chat, norm=norm, topic=topic,
+                            comedy=comedy,
                             services=services, log=log, log_clear=log_clear)
 
 
 def build_outputs(app):
     """Where the audio goes. Two outputs, one at a time -- the director holds
-    a single runtime, so starting one stops the other."""
+    a single runtime, so each refuses to start while the other is live.
+
+    Laid out like Behaviour -- a heading per section, controls in rows, the
+    explanation underneath -- rather than grouped boxes, which gradio draws as
+    one continuous panel with nothing to tell the sections apart.
+    """
     gr.Markdown(
-        "Where the conversation is played. **One at a time:** starting one "
-        "output stops the other."
+        "Where the conversation is played. **One at a time:** stop or "
+        "disconnect one before starting the other."
     )
-    with gr.Group():
-        gr.Markdown("**Discord** - the bot must be connected **and** in a "
-                    "voice channel before anything is audible.")
-        with gr.Row():
-            d_connect = gr.Button("Connect bot", variant="primary", scale=1)
-            d_channel = gr.Dropdown(choices=[], label="Voice channel", scale=3,
-                                    container=True)
-            d_join = gr.Button("Join", scale=1)
-            d_leave = gr.Button("Leave", scale=1)
-    gr.Markdown(app.discord_hint())
 
-    with gr.Group():
-        gr.Markdown("**This machine** - plays out of a local sound device. No "
-                    "token, no bot, no voice channel.")
-        with gr.Row():
-            l_start = gr.Button("Start local output", variant="primary", scale=1)
-            l_sink = gr.Dropdown(
-                choices=app.local_sink_choices(),
-                value=app.state.settings.local_sink,
-                label="Output device", scale=3, container=True)
-            l_refresh = gr.Button("Refresh devices", scale=1)
-            l_stop = gr.Button("Stop", scale=1)
-        with gr.Row():
-            l_stream = gr.Checkbox(
-                value=app.state.settings.stream_tts, scale=1,
-                label="Stream one voice",
-                info="Speaks as the audio is generated rather than rendering "
-                     "the clip first - 0.06s to the first sample against "
-                     "2.21s. One voice at a time, and it holds a second copy "
-                     "of the model (~3.4 GB).")
-            l_stream_voice = gr.Dropdown(
-                choices=[sp.name for sp in app.state.restorable()],
-                value=app.state.settings.stream_tts_voice or None,
-                label="Streamed voice", scale=2, container=True)
-        l_status = gr.Markdown(LOCAL_HINT)
+    gr.Markdown("### Discord")
+    with gr.Row():
+        d_connect = gr.Button("Connect bot", variant="primary", scale=1)
+        d_channel = gr.Dropdown(choices=[], label="Voice channel", scale=3)
+        d_join = gr.Button("Join", scale=1)
+        d_leave = gr.Button("Leave", scale=1)
+        d_disconnect = gr.Button("Disconnect", scale=1)
+    gr.Markdown("The bot must be connected **and** in a voice channel before "
+                "anything is audible. While it is connected the local output "
+                "cannot start - *Disconnect* first.\n\n" + app.discord_hint())
 
-    with gr.Group():
-        gr.Markdown("**Speech engine** - shared by both outputs.")
-        with gr.Row():
-            t_device = gr.Radio(
-                choices=TTS_DEVICES, value=app.state.settings.tts_device,
-                label="Backend", scale=2, container=True)
-            t_restart = gr.Button("Restart tts-server", scale=1)
-            t_stop = gr.Button("Stop tts-server", scale=1)
-        t_status = gr.Markdown(TTS_HINT)
+    gr.Markdown("### This machine")
+    with gr.Row():
+        l_start = gr.Button("Start local output", variant="primary", scale=1)
+        l_sink = gr.Dropdown(
+            choices=app.local_sink_choices(),
+            value=app.state.settings.local_sink,
+            label="Output device", scale=3)
+        l_refresh = gr.Button("Refresh devices", scale=1)
+        l_stop = gr.Button("Stop", scale=1)
+    gr.Markdown("Plays out of a local sound device. No token, no bot, no "
+                "voice channel. While it is playing the bot cannot connect - "
+                "*Stop* first.")
+
+    gr.Markdown("### Virtual microphone")
+    with gr.Row():
+        v_create = gr.Button("Create", variant="primary", scale=1)
+        v_remove = gr.Button("Remove", scale=1)
+        v_mon_on = gr.Button("Monitor on", scale=1)
+        v_mon_off = gr.Button("Monitor off", scale=1)
+    v_volume = gr.Slider(
+        0, audiodev.MONITOR_MAX_VOLUME,
+        value=app.state.settings.local_monitor_volume, step=5,
+        label="Monitor volume (%)",
+        info="How loud you hear it. Only the monitor changes; anything "
+             "recording the microphone still gets the full level.")
+    v_status = gr.Markdown(audiodev.report())
+    gr.Markdown(MIC_HINT)
+
+    gr.Markdown("### Audio")
+    gr.Markdown("Applies to both outputs.")
+    with gr.Row():
+        m_norm = gr.Checkbox(value=app.state.settings.normalize_audio,
+                             label="Normalise output loudness")
+        m_dbfs = gr.Slider(-30, -12, value=app.state.settings.target_dbfs, step=0.5,
+                           label="Target loudness (dBFS RMS)")
+    with gr.Row():
+        m_cap_on = gr.Checkbox(value=app.state.settings.speech_limit_enabled,
+                               label="Hard limit on speech length")
+        m_cap_sec = gr.Slider(
+            3, 120, value=app.state.settings.max_speech_seconds, step=1,
+            label="Max seconds per utterance",
+            info="Ceiling on how long one line can hold the channel. Generation "
+                 "is capped in frames so nothing is rendered and then discarded; "
+                 "anything still over is cut with a short fade.")
+
+    gr.Markdown("### Speech engine")
+    with gr.Row():
+        t_device = gr.Radio(
+            choices=TTS_DEVICES, value=app.state.settings.tts_device,
+            label="Backend", scale=2)
+        t_restart = gr.Button("Restart tts-server", scale=1)
+        t_stop = gr.Button("Stop tts-server", scale=1)
+    gr.Markdown("Shared by both outputs.\n\n" + TTS_HINT)
     return OutputsPanel(
         d_connect=d_connect,
         d_channel=d_channel,
         d_join=d_join,
         d_leave=d_leave,
+        d_disconnect=d_disconnect,
         l_start=l_start,
         l_stop=l_stop,
         l_sink=l_sink,
         l_refresh=l_refresh,
-        l_status=l_status,
-        l_stream=l_stream,
-        l_stream_voice=l_stream_voice,
+        v_create=v_create,
+        v_remove=v_remove,
+        v_mon_on=v_mon_on,
+        v_mon_off=v_mon_off,
+        v_volume=v_volume,
+        v_status=v_status,
+        m_norm=m_norm,
+        m_dbfs=m_dbfs,
+        m_cap_on=m_cap_on,
+        m_cap_sec=m_cap_sec,
         t_restart=t_restart,
         t_stop=t_stop,
         t_device=t_device,
-        t_status=t_status,
     )
 
 
@@ -441,7 +464,20 @@ def build_speakers(app):
                 info="Rewritten between topics from what this character "
                      "actually said. While it has anything in it, this is what "
                      "the model is told to be.")
-            s_reset_dynamic = gr.Button("Reset dynamic to base", size="sm")
+            with gr.Row():
+                s_reset_dynamic = gr.Button("Reset dynamic to base", size="sm")
+                s_sharpen = gr.Button("Sharpen base for comedy", size="sm")
+            s_samples = gr.Textbox(
+                label="Lines in their voice", lines=5,
+                placeholder="I paid four hundred dollars for that sandwich and "
+                            "I would do it again.\nDon't talk to me about Gary.",
+                info="Things this character would actually say, one per line. "
+                     "A few are shown to the model each turn as the sound of "
+                     "the voice - at this model size that does more than any "
+                     "description. Never rewritten by evolution. \"Sharpen\" "
+                     "has the model restate the base prompt as a want, a flaw "
+                     "and a wrong belief instead of adjectives; it only fills "
+                     "the box, so read it before you save.")
             with gr.Group():
                 gr.Markdown(
                     "**Build a persona from their Discord history.** Reads this "
@@ -482,6 +518,8 @@ def build_speakers(app):
         s_persona=s_persona,
         s_dynamic=s_dynamic,
         s_reset_dynamic=s_reset_dynamic,
+        s_sharpen=s_sharpen,
+        s_samples=s_samples,
         s_stims=s_stims,
         s_stim_pct=s_stim_pct,
         s_save=s_save,
@@ -581,9 +619,20 @@ def build_topic(app):
                         label="Results per search",
                         info="Fetched once per subject and cached, then handed out one at "
                              "a time.")
+                    web_read = gr.Checkbox(
+                        value=state.settings.web_read_articles,
+                        label="Read the article",
+                        info="Opens the result and has the model brief what it actually "
+                             "says - that brief is the topic. Off uses the search "
+                             "result's title and snippet, which is a headline with "
+                             "nothing in it to discuss. Happens while the previous "
+                             "topic is still running, so it costs no air time.")
                     gr.Markdown(
-                        "_Searches DuckDuckGo with no API key. If it ever stops returning "
-                        "anything, the layout changed - check the app log for `[web]`._")
+                        "_Looks for news stories first (Bing News feed), then falls back "
+                        "to DuckDuckGo; no API key for either, and sponsored results are "
+                        "dropped. Pages with no real prose - shops, video players, "
+                        "paywalls - are skipped. Everything it does is in the app log "
+                        "under `[web]`._")
 
                 with gr.Tab("Discord (crowd-sourced)"):
                     w_crowd = gr.Slider(
@@ -625,6 +674,7 @@ def build_topic(app):
         w_web=w_web,
         web_subjects=web_subjects,
         web_n=web_n,
+        web_read=web_read,
         w_crowd=w_crowd,
         crowd_pending=crowd_pending,
         m_seed=m_seed,
@@ -681,7 +731,7 @@ def build_behaviour(app):
     with gr.Row():
         m_gap = gr.Slider(0, 3, value=state.settings.gap_seconds, step=0.1,
                           label="Gap between turns (s)", info=HELP["gap_seconds"])
-        m_temp = gr.Slider(0.1, 1.5, value=state.settings.temperature, step=0.05,
+        m_temp = gr.Slider(0.1, 1.8, value=state.settings.temperature, step=0.05,
                            label="LLM temperature", info=HELP["temperature"])
     with gr.Row():
         m_pred = gr.Slider(20, 300, value=state.settings.num_predict, step=10,
@@ -693,21 +743,84 @@ def build_behaviour(app):
         f"(gap {RECOMMENDED['gap_seconds']}s, temp {RECOMMENDED['temperature']}, "
         f"{RECOMMENDED['num_predict']} tokens, {RECOMMENDED['max_history']} turns)")
 
-    gr.Markdown("### Audio")
+    gr.Markdown(
+        "### Comedy\n"
+        "A small model told to be funny holds a panel discussion. These make "
+        "the decisions in code and leave the model to carry them out - see "
+        "*Making it funny* in DEADINTERNET.md. Numbers for each segment are "
+        "on the Diagnostics tab."
+    )
     with gr.Row():
-        m_norm = gr.Checkbox(value=state.settings.normalize_audio,
-                             label="Normalise output loudness")
-        m_dbfs = gr.Slider(-30, -12, value=state.settings.target_dbfs, step=0.5,
-                           label="Target loudness (dBFS RMS)")
+        m_moves = gr.Checkbox(
+            value=state.settings.moves_enabled,
+            label="Deal a comedic move each turn",
+            info="One concrete instruction per line - take it literally, "
+                 "escalate it, six words or fewer - drawn from a shuffled deck "
+                 "so none repeats until all have been used. Free: it is one "
+                 "sentence in the prompt.")
+        m_move_pct = gr.Slider(
+            0, 100, value=state.settings.move_chance, step=5,
+            label="Turns that get a move (%)",
+            info="Not 100 - a cast that is always doing a bit has nobody "
+                 "left to react to it.")
+    m_moves_text = gr.Textbox(
+        value=state.settings.moves_text, lines=8, label="The deck",
+        placeholder=DEFAULT_MOVES,
+        info="One move per line; empty uses the default deck shown greyed "
+             "out. Write things to DO, never things to BE. Start a line with "
+             "`short:` to hold the reply to a few words, `duo:` to skip it "
+             "when only one speaker is on. A line containing {bit} is a "
+             "callback, dealt only once something has been remembered.")
     with gr.Row():
-        m_cap_on = gr.Checkbox(value=state.settings.speech_limit_enabled,
-                               label="Hard limit on speech length")
-        m_cap_sec = gr.Slider(
-            3, 120, value=state.settings.max_speech_seconds, step=1,
-            label="Max seconds per utterance",
-            info="Ceiling on how long one line can hold the channel. Generation "
-                 "is capped in frames so nothing is rendered and then discarded; "
-                 "anything still over is cut with a short fade.")
+        m_premises = gr.Checkbox(
+            value=state.settings.premises_enabled,
+            label="Write premises for each topic",
+            info="Once per topic, every character is given something petty to "
+                 "want out of it, chosen to collide with what the others "
+                 "want. One call, made while the previous topic is still "
+                 "playing. It is logged when it lands.")
+        m_bits = gr.Checkbox(
+            value=state.settings.bits_enabled,
+            label="Remember things to call back to",
+            info="Every few lines the oddest specifics are noted down, so a "
+                 "callback move can reach something that scrolled out of the "
+                 "context long ago. Survives topic switches. One small call, "
+                 "queued behind the next line.")
+        m_script = gr.Checkbox(
+            value=state.settings.script_framing,
+            label="Show the model a script, not a chat",
+            info="Chat turns are what an assistant is trained to be helpful "
+                 "inside. The same conversation laid out as dialogue to "
+                 "continue reads as fiction. Try it per model - some follow a "
+                 "script better than others.")
+    with gr.Row():
+        m_takes = gr.Slider(
+            1, 5, value=state.settings.line_takes, step=1,
+            label="Takes per line",
+            info="A take that opens by agreeing, explains itself, echoes a "
+                 "recent line or asks yet another question is written again, "
+                 "up to this many times; the least bad one plays. A clean "
+                 "first take costs nothing extra. 1 turns the filter off.")
+        m_judge = gr.Checkbox(
+            value=state.settings.line_judge,
+            label="Have the model pick the take",
+            info="Always writes every take, then asks which is most "
+                 "surprising and specific. Better lines for several times the "
+                 "LLM work per line - watch the stage strip before leaving "
+                 "this on.")
+    with gr.Row():
+        m_min_p = gr.Slider(
+            0.0, 0.3, value=state.settings.min_p, step=0.01,
+            label="min-p (Ollama)",
+            info="Drops any token less likely than this fraction of the most "
+                 "likely one. This is what lets temperature go past 1.0 "
+                 "without lines falling apart: try 0.05-0.1 with temperature "
+                 "1.1-1.3. 0 leaves Ollama's own top-p and top-k in charge.")
+        m_rep_pen = gr.Slider(
+            1.0, 1.5, value=state.settings.repeat_penalty, step=0.01,
+            label="Repeat penalty (Ollama)",
+            info="Makes words already in the context less likely. 1.0 is "
+                 "off; much past 1.2 starts avoiding words it needs.")
 
     gr.Markdown(
         "### Between segments\n"
@@ -721,8 +834,8 @@ def build_behaviour(app):
             label="Evolve characters between segments",
             info="Re-reads what each speaker actually said and rewrites their "
                  "dynamic system prompt from it, anchored to the base prompt you "
-                 "wrote. Uses thinking mode, so it competes with tts-server for "
-                 "the card - see the VRAM note in DEADINTERNET.md.")
+                 "wrote. One model call per character, competing with "
+                 "tts-server for the card - see the VRAM note in DEADINTERNET.md.")
         m_evolve_max = gr.Slider(
             1, 12, value=state.settings.evolve_max_per_break, step=1,
             label="Characters rewritten per break",
@@ -733,6 +846,21 @@ def build_behaviour(app):
             label="Seconds to hold the next topic",
             info="Past this the show carries on and the rewrites land whenever "
                  "they finish - they apply on the next turn either way.")
+        m_evolve_chars = gr.Slider(
+            300, 1200, value=state.settings.evolve_max_chars, step=50,
+            label="Evolved prompt size (characters)",
+            info="Each rewrite rebuilds the prompt inside this budget instead "
+                 "of adding to it, and one that is already over gets condensed "
+                 "the next time that character is rewritten. Never below the "
+                 "length of the base prompt you wrote.")
+        m_evolve_think = gr.Checkbox(
+            value=state.settings.evolve_think,
+            label="Think before rewriting",
+            info="Separate from the thinking switch above, which is for spoken "
+                 "lines. Roughly a minute per character instead of ten seconds, "
+                 "and a model that reasons at length often runs out of room and "
+                 "gets retried without it anyway. Leave off unless you can see "
+                 "it helping.")
     with gr.Row():
         m_adbreak = gr.Checkbox(
             value=state.settings.adbreak_enabled,
@@ -861,13 +989,21 @@ def build_behaviour(app):
         m_temp=m_temp,
         m_pred=m_pred,
         m_hist=m_hist,
-        m_norm=m_norm,
-        m_dbfs=m_dbfs,
-        m_cap_on=m_cap_on,
-        m_cap_sec=m_cap_sec,
+        m_moves=m_moves,
+        m_move_pct=m_move_pct,
+        m_moves_text=m_moves_text,
+        m_premises=m_premises,
+        m_bits=m_bits,
+        m_script=m_script,
+        m_takes=m_takes,
+        m_judge=m_judge,
+        m_min_p=m_min_p,
+        m_rep_pen=m_rep_pen,
         m_evolve=m_evolve,
         m_evolve_max=m_evolve_max,
         m_evolve_wait=m_evolve_wait,
+        m_evolve_chars=m_evolve_chars,
+        m_evolve_think=m_evolve_think,
         m_adbreak=m_adbreak,
         m_ad_gain=m_ad_gain,
         m_ad_prompt=m_ad_prompt,

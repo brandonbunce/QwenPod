@@ -332,8 +332,9 @@ every request. Off by default, and worth understanding before turning it on:
   checkbox is accepted and ignored on that provider.
 - **A model with no reasoning mode does not ignore `think` — it refuses the
   request.** Ollama answers `400 "<model> does not support thinking"` and the
-  whole call is lost. That matters because `evolve_persona` *forces*
-  `think=True`: on such a model every persona rewrite failed, silently and
+  whole call is lost. That mattered when `evolve_persona` *forced*
+  `think=True` (it is now the *Think before rewriting* switch, off by default):
+  on such a model every persona rewrite failed, silently and
   forever, while the show itself carried on working normally. The client now
   learns this from the first 400, drops `think`, retries, and remembers for the
   session — the same way `OpenAIClient` learns its token parameter. An
@@ -489,7 +490,10 @@ token would be unreadable — you would not be able to tell there were two.
 **Outputs** offers a second, completely independent output: play out of a local
 audio device instead of into a voice channel. No token, no bot, no server. The
 obvious use is a **virtual microphone**, which makes the cast an input device
-every game and voice client on the box can select:
+every game and voice client on the box can select.
+
+The **Virtual microphone** section on Outputs makes one. *Create* runs these
+two commands (only the half that is missing, so it is safe to press twice):
 
 ```bash
 pactl load-module module-null-sink sink_name=qwenpod sink_properties=device.description=QwenPod_Output
@@ -502,64 +506,28 @@ Pick **qwenpod** as the output device, press *Start local output*, and select
 **QwenPod_Microphone** as the input in the other application. Games that only
 use the system default need `pactl set-default-source qwenpod_mic`. Proton
 exposes PulseAudio sources through winepulse, so Steam titles see it like any
-native one. The modules are not persistent — they go away on reboot. Unload
-them with `pactl unload-module <id>`, newest first.
+native one.
 
-**One output at a time.** The director holds a single runtime, so starting one
-stops the other, and both buttons say so.
+A null sink has no speakers, so without more you go deaf to everything you are
+sending. *Monitor on* loops it back to your default output:
 
-#### Streaming one voice
+```bash
+pactl load-module module-loopback source=qwenpod.monitor latency_msec=60
+```
 
-*Stream one voice* speaks **as the audio is generated** instead of rendering
-the clip and then playing it. The difference is not subtle. For a nine-second
-line, measured:
+Leaving out `sink=` is deliberate — it follows whatever your default output
+is. The loopback is its own stream, so the *Monitor volume* slider (or
+`pavucontrol`) turns down what you hear without touching what anyone else
+does. None of these modules survive a reboot; press *Create* again.
+*Remove* and *Monitor off* unload **only these modules, by id** — unloading
+`module-null-sink` by name would take every null sink on the machine with it
+(`deadinternet/audiodev.py`).
 
-| | time to the first sample |
-| --- | --- |
-| buffered (`/v1/audio/speech`) | **2.21 s** |
-| streaming (`qwen-tts --stream-by-line --codec-fused`) | **0.06 s** |
-
-The whole line finishes rendering in 1.57 s either way; what changes is that
-you stop waiting for it. That is the difference between a voice changer and a
-walkie-talkie.
-
-The catch is that **a reference clip is fixed at process start**, so one
-process speaks one voice. That rules it out for the 33-speaker show and makes
-it exactly right for the microphone, where you have picked a character and are
-talking as them. It also holds a second copy of the model (~3.4 GB), so it is
-off by default. Anything spoken by a *different* speaker is put back on the
-queue and rendered the buffered way, in order.
-
-Two details worth knowing:
-
-- **The HTTP server cannot do this** -- it sets `Content-Length` and hands over
-  the whole clip at once, confirmed by measurement, and `tools/tts-server.cpp`
-  is upstream. The streaming path shells out to the `qwen-tts` CLI instead and
-  pipes it at `paplay`, which is only natural because the local output is
-  already a sound device.
-- **Levelling is a feedback loop, not a constant.** `normalize_wav` needs the
-  whole clip and not having it is the point, so the gain is learned from what
-  each line actually produced and applied to the next. A fixed multiplier was
-  tried first and is wrong twice over: output level varies about **sixfold
-  between voices** (0.054 vs 0.132 RMS measured on two) and about **sixfold
-  between consecutive lines of the same voice** (0.038 to 0.225). Seeding the
-  guess from the reference clip was also tried, and is wrong for a third
-  reason -- the model normalises the reference internally, so a 0.0609 RMS clip
-  produced 0.356 output while a louder one produced 0.087.
-  So: measure the line, aim at -20 dBFS, **cap the gain by the peak just seen**
-  so it cannot ask for a level that would have clipped, and move only part of
-  the way. Snapping straight to the ideal fitted one line perfectly and drove
-  the next into the ceiling. The learned value is written back to
-  `stream_tts_gain` on close, so a restart starts level rather than loud.
-  Distortion is far worse than quiet here, and quiet is what a microphone gain
-  control is for.
-
-`--stream-by-line` emits **one 44-byte WAV header per line**, so the headers are
-stripped at each boundary and raw PCM is handed to a single long-lived
-`paplay`; piping the stream in whole would feed it a second header mid-audio.
-Backpressure is free and load-bearing: generation runs several times faster
-than playback, so the pipe fills, the pump blocks, and the sound card paces
-everything.
+**One output at a time.** The director holds a single runtime, so each output
+refuses to start while the other is live: *Start local output* is refused while
+the bot is logged in (press *Disconnect*), and *Connect bot* is refused while
+the local output is playing (press *Stop*). Switching is something you do on
+purpose, never a side effect of another button.
 
 Two things are markedly easier here than over Discord, and one is lost:
 
@@ -748,7 +716,7 @@ Each speaker has **two** system prompts:
 
 Turn it on with *Evolve characters between segments* on **Behaviour**. After each
 topic, the speakers who actually spoke get their lines fed back through the model
-in **thinking mode**, with the base prompt included as an anchor — so drift
+with the base prompt included as an anchor — so drift
 accumulates but a character twenty topics in is still recognisably the one you
 wrote. Only speakers who spoke are candidates; the rest are ordered
 longest-unevolved-first so a quiet character still comes round.
@@ -762,10 +730,40 @@ Two things to watch:
 
 - **It competes with tts-server for the card.** Reasoning while speech is
   synthesising is exactly the VRAM contention described above. Off by default.
-- **Personas tend to bloat.** Every rewrite has something new to account for and
-  no reason to drop anything. There is a hard 1200-character ceiling in the
-  prompt *and* in code, but over a long session expect to reach for Reset. This
-  is managed, not solved.
+- **Personas want to bloat.** Every rewrite has something new to account for and
+  no reason to drop anything, so left alone each character climbs to the ceiling
+  and sits there — a one-line base carrying a page of fixations that each lasted
+  one segment. *Evolved prompt size* on **Behaviour** (`evolve_max_chars`, 600 by
+  default) is the budget that stops it:
+  - the rewrite is told to rebuild the sheet inside the budget — core identity
+    first, at most four lasting tendencies, one-segment material out — rather
+    than append to the current one;
+  - a sheet that is already over budget is called out, so it shrinks on that
+    character's next rewrite. That includes anything that grew before the
+    setting existed; nothing needs resetting by hand;
+  - a result that still comes back long gets a second, non-thinking *condense*
+    call (`evolve: Name (condense)` in the raw feed) instead of being cut off.
+    Cutting drops the tail, which is the newest material, and keeps the oldest
+    clutter. A sentence-boundary cut remains as the last resort if that call
+    fails.
+
+- **Thinking is off for rewrites, and separately switchable** (*Think before
+  rewriting*, `evolve_think`). It used to be forced on. Measured on a 12B
+  reasoning model it was 60–70 seconds a character against 3–15 without, it spent
+  its entire token allowance and returned nothing about two times in three, and
+  the rewrites it did produce were no better. At six characters a break that is
+  seven minutes against one, behind a 60-second hold. If you turn it on, a
+  thinking pass that comes back empty is retried once without
+  (`evolve: Name (no think)`) rather than lost.
+- **Not everyone who spoke is rewritten.** One line is a remark, not a tendency,
+  and rewriting from it only promotes whatever was said into a trait — so it
+  takes two lines to be a candidate. A sheet that is over its size budget is the
+  exception: it is rewritten whatever was said, and goes to the front of the
+  queue, so a backlog of bloated sheets clears in a few breaks.
+
+  The budget never goes below the length of the base prompt you wrote, and never
+  above 1200 characters. The log line for each rewrite shows the size change
+  (`[evolve] Alex (1133 -> 540 chars)`).
 
 ### The ad break
 
@@ -965,6 +963,48 @@ handed to the TTS to voice as digits. Mentions resolve to names, the `@` and
 `#` sigils come off (otherwise they are read as "at" and "hash"), and custom
 emoji are dropped since there is no way to say them.
 
+### Web topics are read, not just found
+
+A search result is not a topic. Its title and snippet were written for a results
+page, and for anything anyone sells the first several are adverts: searching
+`vr` used to hand the cast *"5 Best VR Headsets 2025 - Read our Expert
+Reviews!"*, which nobody can have an opinion about. With **Read the article** on
+(**Topic → Web search**, `web_read_articles`, the default), a web topic is built
+in three steps in `websearch.py` and `llm.brief_article`:
+
+1. **Find stories.** Bing's news feed is asked first — one URL per article,
+   dated, no adverts. It is inconsistent about answering in RSS (broad queries
+   like `politics` get its ordinary results page instead), so both shapes are
+   parsed, and the page is fetched as well when the feed comes back thin.
+   DuckDuckGo is the fallback, with sponsored results dropped and its redirect
+   links unwrapped to the real address.
+2. **Read one.** The page is fetched (public `http(s)` only, 1.5 MB cap) and the
+   prose pulled out with the standard library: paragraph text, preferring
+   `<article>`/`<main>`, skipping navigation, forms and footers. A page with
+   under 600 characters of actual sentences is not an article — that is what
+   rejects shops, video players and cookie walls, by content rather than by a
+   list of domains. Blocks that are mostly digits and prices are not prose
+   either, which is what a product grid otherwise passes as.
+3. **Brief it.** The model turns up to 6000 characters of article into two or
+   three spoken sentences carrying the specifics — names, numbers, the odd
+   detail — because those are what a panel disagrees about. **That brief is the
+   topic**: the announcer reads it out and every speaker sees it for the
+   segment. The article text goes in fenced and the model is told it is material,
+   not instruction; it can also answer `SKIP` for a page that turned out not to
+   be a story.
+
+Up to three results are tried per subject before moving to the next subject, and
+stories already used this session are not used again. If nothing anywhere can be
+opened, the old behaviour — the headline — is the last resort rather than the
+source going silent. All of it happens in the background topic build, so it costs
+no air time: about 3–6 seconds per topic on a local 12B model. Every step logs
+under `[web]`, including what was read and the brief that came out.
+
+Two things that will not be worked around: a site that refuses the request
+(403, paywall) is skipped, and if DuckDuckGo answers with a CAPTCHA it is left
+alone for thirty minutes. MSN links are tried last, because those pages are an
+empty shell filled in by script and there is never anything to read.
+
 ### Switching is prefetched
 
 Everything expensive about a switch — reading pins from every channel,
@@ -1143,6 +1183,113 @@ never values, and has no field to type a key into. `.env`, `voices/`,
 `deadinternet.json`, and `tts-server.log` are gitignored.
 
 Edits to `.env` need an app restart.
+
+---
+
+## Making it funny
+
+Left alone, a small local model does not do comedy. It holds a panel
+discussion: every character is the same agreeable assistant under a different
+name, each line is two balanced sentences about the topic, and nothing anyone
+says changes what anyone else says next. Telling it to be funny does not help.
+It is tuned to be helpful, and a prompt that offers a choice of "a take, a
+detail, a disagreement, a joke" gets the mildest option every time.
+
+What a 12B model *can* do is carry out one specific instruction. So the
+decisions are made by code, and the model only executes them. All of it is on
+the **Behaviour** tab under **Comedy**, all of it can be switched off
+independently, and the code is `deadinternet/comedy.py` (everything that is not
+a model call) plus four methods in `deadinternet/llm.py`.
+
+| Piece | What it does | What it costs |
+| --- | --- | --- |
+| **Move deck** | Deals one concrete comedic move per turn - *take it literally*, *agree for a worrying reason*, *a made-up anecdote with a name and an exact number*, *six words or fewer* - from a shuffled bag, on the seeded RNG. | Nothing. One sentence in the prompt. |
+| **Rhythm** | Comes with the deck. About half of ordinary turns are held to one sentence, and a `short:` move to a few words. A short move the model ignored is cut to its first sentence, so it always lands. | Nothing - lines get *cheaper*. |
+| **Wear** | Comes with the deck. Phrases a speaker has used in two or more recent lines are named in the prompt as off-limits for one line. Evolved personas are mostly fixations, and without this every line visits all of them. Stims and cast names are spared. | Nothing. |
+| **Premises** | Once per topic, one call gives each character (the first 8) something petty to *want* out of it, chosen to collide with the others. Prefetched with the topic; for a typed topic it is written behind the first line. | One call per topic, off-air. |
+| **Line filter** | A take that opens by agreeing, explains itself, echoes a recent line, leans on a worn phrase or asks yet another question is written again, up to **Takes per line** times. The least-flagged one plays. | Nothing for a clean first take; one more LLM call per flagged one. |
+| **Judge** | Off by default. Always writes every take and asks the model which is most *surprising and specific* - never "funniest", which picks the take with the most visible joke in it. | Takes + 1 calls for every line. Watch the stage strip. |
+| **Callback memory** | Every 8 lines, one small call notes the oddest specifics said ("exactly forty-two in Vegas"). The callback move draws on them, so something from two topics ago can come back. Kept across topic switches, cleared with the context. | One small call per 8 lines, queued behind the next line. |
+| **Script framing** | Off by default. Shows the model the conversation as a page of dialogue to continue instead of chat turns to answer - chat turns are what an assistant is trained to be helpful inside. | Nothing. Try it per model. |
+| **min-p / repeat penalty** | Ollama only. min-p is what lets temperature go past 1.0 without lines falling apart. Try min-p 0.05-0.1 with temperature 1.1-1.3. | Nothing. |
+
+Moves are skipped when answering a real person. They typed something to get an
+answer to it, and half the deck is ways of not giving one.
+
+### The deck is yours
+
+**The deck** box takes one move per line; empty uses the default. Write things
+to *do*, never things to *be* - "be sarcastic" gets one sarcastic adjective,
+"treat the most trivial detail as the real scandal" gets a joke. Prefix a line
+with `short:` to hold the reply to a few words, `duo:` to skip it when only one
+speaker is on, and put `{bit}` in a line to make it a callback.
+
+### Characters are most of it
+
+No amount of machinery rescues a persona that is a list of adjectives. "You
+are witty" gives the model nothing to do. A character is funny because of what
+they **want**, what is **wrong with them**, and what they are **wrong about**,
+written as behaviour: not *lazy* but *has an excuse ready that involves his
+knee*.
+
+On the **Speakers** tab:
+
+- **Sharpen base for comedy** has the model restate the base prompt in those
+  terms, with an attitude toward a couple of the other cast members. It only
+  fills the box - read it, fix it, then save.
+- **Lines in their voice** takes things the character would actually say, one
+  per line. Four are shown to the model each turn, rotated so it does not start
+  quoting them. At this model size a handful of real lines does more than any
+  description. They live outside the persona on purpose: evolution rewrites
+  the persona, and a rewrite summarises examples into adjectives. Personas
+  built from Discord history get this for free - the quoted messages are read
+  as samples once the character has evolved past the prompt that contained
+  them.
+
+Evolution is also told never to make a character more reasonable, balanced or
+self-aware than the base you wrote, which is the one direction they all drift.
+
+### Is it actually funnier?
+
+`deadinternet/evalrun.py` writes a conversation through the director's real
+line-writing path - same prompts, deck, filter and seeded RNG - with no TTS, no
+Discord and no playback. It reads the real roster and settings and writes
+neither. Change one thing, keep the seed and topic, compare:
+
+```bash
+.venv-app/bin/python -m deadinternet.evalrun --seed 7 --turns 30 \
+    --topic "airport security" --out /tmp/a.json
+.venv-app/bin/python -m deadinternet.evalrun --seed 7 --turns 30 \
+    --topic "airport security" --set moves_enabled=false --out /tmp/b.json
+.venv-app/bin/python -m deadinternet.evalrun --compare /tmp/a.json /tmp/b.json --judge
+```
+
+`--compare` prints the numbers side by side; `--judge` asks the model which
+recording it would air, twice with the order swapped, because a model judging
+two things prefers whichever it read first. Add `--set provider=openai` to the
+compare to judge with a bigger model than the one that wrote them. It is asked
+for a preference and never a score - a model rating funniness out of ten says
+seven.
+
+The numbers (also live on **Diagnostics**, and logged as `[comedy] segment:`
+at every topic switch) are proxies. None of them measures funny, but each is
+something a dull transcript reliably gets wrong:
+
+| Number | Dull looks like |
+| --- | --- |
+| words per line, and their **sd** | every line the same two sentences - sd near zero |
+| % short | 0 |
+| % questions | high: the model handing the work back |
+| % agreeable openers, % filler | anything above a few percent |
+| specifics per line | near 0 - no names, no figures |
+| distinct-3 | falling, as the cast repeats itself and each other |
+
+Measured on the default cast with `huihui_ai/gemma-4-abliterated:12b`, 14
+lines, same seed and topic, comedy layer off against on: 44.5 -> 21.4 words per
+line, specifics 0.36 -> 0.93 per line, distinct-3 0.92 -> 0.99, and the judge
+preferred the second in both orders. Same model judging its own work, so
+treat that as a smoke test and trust your ears. Writing stayed at about 2.3s a
+line: the premises and bits calls are paid for by the lines being half as long.
 
 ---
 

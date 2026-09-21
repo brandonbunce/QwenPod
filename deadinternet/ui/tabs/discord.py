@@ -16,6 +16,14 @@ def connect_bot(app):
             note(msg) if ok else warn(msg))
 
 
+def disconnect_bot(app):
+    ok, msg = app.disconnect_discord()
+    app.events.add(VOICE, f"disconnect bot - {msg}")
+    # Only the voice channels are cleared. The pin-channel checklist saves on
+    # every change, so emptying it here would erase the saved selection.
+    return gr.update(choices=[], value=None), note(msg) if ok else warn(msg)
+
+
 def resync_connection(app):
     """Repopulate the channel lists if the bot is already connected from
     before this page load -- a reload (or a second tab) never re-checks this on
@@ -26,7 +34,7 @@ def resync_connection(app):
     Deliberately does not attempt a fresh connection: only resyncs an existing
     one, so opening the page never connects the bot by itself.
     """
-    if app.runtime and app.runtime.client.is_ready():
+    if app.bot_ready():
         return connect_bot(app)
     return gr.update(), gr.update(), gr.update()
 

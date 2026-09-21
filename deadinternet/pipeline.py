@@ -56,6 +56,8 @@ def stage_for_label(label: str) -> str:
         return AD
     if text.startswith("persona:"):
         return PERSONA
+    if text.startswith("topic:"):
+        return TOPIC
     return LLM
 
 

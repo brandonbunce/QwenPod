@@ -20,7 +20,7 @@ NO_DYNAMIC = ""
 
 def load_speaker(app, sel):
     state = app.state
-    blank = ("", None, "", "", NO_DYNAMIC, "", 0)
+    blank = ("", None, "", "", NO_DYNAMIC, "", "", 0)
     if not sel or sel == NEW:
         return (*blank, "New speaker - fill in the form and press Save.")
     sp = state.get(sel)
@@ -28,10 +28,10 @@ def load_speaker(app, sel):
         return (*blank, "Not found.")
     clip = sp.ref_wav if sp.ref_wav and os.path.exists(sp.ref_wav) else None
     return (sp.name, clip, sp.ref_text, sp.persona, sp.dynamic_persona,
-            sp.stims, sp.stim_chance, f"Editing **{sp.name}**.")
+            sp.sample_lines, sp.stims, sp.stim_chance, f"Editing **{sp.name}**.")
 
 
-def save_speaker(app, name, clip, ref_text, persona, stims, stim_pct):
+def save_speaker(app, name, clip, ref_text, persona, samples, stims, stim_pct):
     state, tts = app.state, app.tts
     name = (name or "").strip()
     if not name:
@@ -63,6 +63,7 @@ def save_speaker(app, name, clip, ref_text, persona, stims, stim_pct):
         persona=(persona or "").strip(),
         enabled=existing.enabled if existing else False,
         stims=(stims or "").strip(), stim_chance=float(stim_pct or 0),
+        sample_lines=(samples or "").strip(),
     )
     state.upsert(sp)
     ok, msg = tts.register(name, stored, sp.ref_text, force=True)
@@ -127,6 +128,28 @@ def reset_dynamic(app, sel):
     app.events.add(VOICE, f"reset {sp.name} to their base system prompt")
     return (gr.update(value=NO_DYNAMIC),
             note(f"**{sp.name}** is back to their base system prompt."))
+
+
+def sharpen_persona(app, name, persona):
+    """Restate the base prompt as a want, a flaw and a wrong belief.
+
+    Fills the box and stops there, the same as Build persona: the result is a
+    draft, and a model's idea of a character is not one to save unread.
+    """
+    name = (name or "").strip()
+    if not name:
+        return gr.update(), warn("Give the speaker a name first.")
+    others = [s.name for s in app.state.active() if s.name != name][:6]
+    try:
+        out = app.llm.sharpen_persona(name, (persona or "").strip(), others)
+    except Exception as e:
+        return gr.update(), warn(f"Could not rewrite the prompt - {e}")
+    if not out:
+        return gr.update(), warn("The LLM returned nothing - check the model "
+                                 "is loaded.")
+    return (gr.update(value=out),
+            note(f"Rewrote **{name}**'s base prompt. Read it over, then press "
+                 "**Save speaker** - nothing has been saved."))
 
 
 def delete_speaker(app, sel):

@@ -132,6 +132,8 @@ def build(app):
                 u.s_persona = speakers.s_persona
                 u.s_dynamic = speakers.s_dynamic
                 u.s_reset_dynamic = speakers.s_reset_dynamic
+                u.s_sharpen = speakers.s_sharpen
+                u.s_samples = speakers.s_samples
                 u.s_stims = speakers.s_stims
                 u.s_stim_pct = speakers.s_stim_pct
                 u.s_save = speakers.s_save
@@ -156,6 +158,7 @@ def build(app):
                 u.w_web = topic.w_web
                 u.web_subjects = topic.web_subjects
                 u.web_n = topic.web_n
+                u.web_read = topic.web_read
                 u.w_crowd = topic.w_crowd
                 u.crowd_pending = topic.crowd_pending
                 u.m_seed = topic.m_seed
@@ -169,17 +172,24 @@ def build(app):
                 u.d_channel = outputs.d_channel
                 u.d_join = outputs.d_join
                 u.d_leave = outputs.d_leave
+                u.d_disconnect = outputs.d_disconnect
                 u.l_start = outputs.l_start
                 u.l_stop = outputs.l_stop
                 u.l_sink = outputs.l_sink
                 u.l_refresh = outputs.l_refresh
-                u.l_status = outputs.l_status
-                u.l_stream = outputs.l_stream
-                u.l_stream_voice = outputs.l_stream_voice
+                u.v_create = outputs.v_create
+                u.v_remove = outputs.v_remove
+                u.v_mon_on = outputs.v_mon_on
+                u.v_mon_off = outputs.v_mon_off
+                u.v_volume = outputs.v_volume
+                u.v_status = outputs.v_status
+                u.m_norm = outputs.m_norm
+                u.m_dbfs = outputs.m_dbfs
+                u.m_cap_on = outputs.m_cap_on
+                u.m_cap_sec = outputs.m_cap_sec
                 u.t_restart = outputs.t_restart
                 u.t_stop = outputs.t_stop
                 u.t_device = outputs.t_device
-                u.t_status = outputs.t_status
             with gr.Tab("Behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
@@ -200,13 +210,21 @@ def build(app):
                 u.m_temp = behaviour.m_temp
                 u.m_pred = behaviour.m_pred
                 u.m_hist = behaviour.m_hist
-                u.m_norm = behaviour.m_norm
-                u.m_dbfs = behaviour.m_dbfs
-                u.m_cap_on = behaviour.m_cap_on
-                u.m_cap_sec = behaviour.m_cap_sec
                 u.m_evolve = behaviour.m_evolve
                 u.m_evolve_max = behaviour.m_evolve_max
                 u.m_evolve_wait = behaviour.m_evolve_wait
+                u.m_evolve_chars = behaviour.m_evolve_chars
+                u.m_evolve_think = behaviour.m_evolve_think
+                u.m_moves = behaviour.m_moves
+                u.m_move_pct = behaviour.m_move_pct
+                u.m_moves_text = behaviour.m_moves_text
+                u.m_premises = behaviour.m_premises
+                u.m_bits = behaviour.m_bits
+                u.m_script = behaviour.m_script
+                u.m_takes = behaviour.m_takes
+                u.m_judge = behaviour.m_judge
+                u.m_min_p = behaviour.m_min_p
+                u.m_rep_pen = behaviour.m_rep_pen
                 u.m_adbreak = behaviour.m_adbreak
                 u.m_ad_gain = behaviour.m_ad_gain
                 u.m_ad_prompt = behaviour.m_ad_prompt
@@ -243,6 +261,7 @@ def build(app):
                 u.dbg_chat = diag.chat
                 u.dbg_norm = diag.norm
                 u.dbg_topic = diag.topic
+                u.dbg_comedy = diag.comedy
                 u.dbg_services = diag.services
                 u.dbg_log = diag.log
                 u.dbg_log_clear = diag.log_clear
@@ -273,30 +292,40 @@ def build(app):
         u.d_connect.click(bound(t_discord.connect_bot, app), None, [u.d_channel, u.m_rot_chans, u.sb_action])
         u.d_join.click(bound(t_discord.join_channel, app), u.d_channel, u.sb_action)
         u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
+        u.d_disconnect.click(bound(t_discord.disconnect_bot, app), None,
+                             [u.d_channel, u.sb_action])
 
-        # Local output. Starting one output stops the other, so these write
-        # the action line the same way the Discord buttons do.
+        # Local output. Each output refuses to start while the other is live,
+        # so these write the action line the same way the Discord buttons do.
         u.l_start.click(bound(t_local.start_local, app), None, u.sb_action)
         u.l_stop.click(bound(t_local.stop_local, app), None, u.sb_action)
         u.l_refresh.click(bound(t_local.refresh_sinks, app), None,
                           [u.l_sink, u.sb_action])
         u.l_sink.change(bound(t_local.set_sink, app), u.l_sink, u.sb_action)
-        u.l_stream.change(bound(t_local.set_stream, app),
-                          [u.l_stream, u.l_stream_voice], u.sb_action)
+        # Virtual microphone. Each button re-lists the output devices, since
+        # making or removing the sink is exactly what changes that list.
+        mic_out = [u.l_sink, u.v_status, u.sb_action]
+        u.v_create.click(bound(t_local.create_mic, app), None, mic_out)
+        u.v_remove.click(bound(t_local.remove_mic, app), None, mic_out)
+        u.v_mon_on.click(bound(t_local.monitor_on, app), None, mic_out)
+        u.v_mon_off.click(bound(t_local.monitor_off, app), None, mic_out)
+        u.v_volume.release(bound(t_local.set_monitor_volume, app), u.v_volume,
+                           u.sb_action)
         u.t_restart.click(bound(t_local.restart_tts, app), u.t_device,
                           u.sb_action)
         u.t_stop.click(bound(t_local.stop_tts, app), None, u.sb_action)
-        u.l_stream_voice.change(bound(t_local.set_stream, app),
-                                [u.l_stream, u.l_stream_voice], u.sb_action)
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,
                           [u.s_name, u.s_clip, u.s_reftext, u.s_persona,
-                           u.s_dynamic, u.s_stims, u.s_stim_pct, u.sb_action])
+                           u.s_dynamic, u.s_samples, u.s_stims, u.s_stim_pct,
+                           u.sb_action])
         u.s_save.click(bound(t_speakers.save_speaker, app),
-                       [u.s_name, u.s_clip, u.s_reftext, u.s_persona, u.s_stims,
-                        u.s_stim_pct],
+                       [u.s_name, u.s_clip, u.s_reftext, u.s_persona,
+                        u.s_samples, u.s_stims, u.s_stim_pct],
                        sel_out + [u.sb_action])
+        u.s_sharpen.click(bound(t_speakers.sharpen_persona, app),
+                          [u.s_name, u.s_persona], [u.s_persona, u.sb_action])
         u.s_delete.click(bound(t_speakers.delete_speaker, app), u.s_roster, sel_out + [u.sb_action])
         u.s_reset_dynamic.click(bound(t_speakers.reset_dynamic, app), u.s_roster,
                                 [u.s_dynamic, u.sb_action])
@@ -358,6 +387,7 @@ def build(app):
         bind(u.w_crowd, "source_crowd_weight", "crowd weight", float, "release")
         bind(u.web_subjects, "web_subjects", "web subjects", None, "blur")
         bind(u.web_n, "web_results_per_search", "results per search", int, "release")
+        bind(u.web_read, "web_read_articles", "reading web articles", bool)
         bind(u.crowd_max, "crowd_max", "crowd queue cap", int, "release")
         u.crowd_clear.click(bound(t_topic.clear_crowd, app), None, [u.sb_action, u.crowd_pending])
         u.m_topic_now.click(bound(t_topic.switch_to_typed, app), u.m_topic, u.sb_action)
@@ -388,6 +418,20 @@ def build(app):
         bind(u.m_temp, "temperature", "LLM temperature", float, "release")
         bind(u.m_pred, "num_predict", "max tokens per line", int, "release")
         bind(u.m_hist, "max_history", "context turns", int, "release")
+        bind(u.m_moves, "moves_enabled", "comedic moves", bool)
+        bind(u.m_move_pct, "move_chance", "turns that get a move", float,
+             "release")
+        bind(u.m_moves_text, "moves_text", "the move deck", None, "blur")
+        bind(u.m_premises, "premises_enabled", "topic premises", bool)
+        bind(u.m_bits, "bits_enabled", "callback memory", bool)
+        bind(u.m_script, "script_framing", "script framing", bool)
+        bind(u.m_takes, "line_takes", "takes per line", int, "release")
+        bind(u.m_judge, "line_judge", "model picks the take", bool)
+        # after= for the same reason as thinking: the sampler options live on
+        # the shared Ollama client, and rebuild_llm() is what copies them on.
+        bind(u.m_min_p, "min_p", "min-p", float, "release", after=_rebuild_note)
+        bind(u.m_rep_pen, "repeat_penalty", "repeat penalty", float, "release",
+             after=_rebuild_note)
         bind(u.m_norm, "normalize_audio", "loudness normalisation", bool)
         bind(u.m_dbfs, "target_dbfs", "target loudness", float, "release")
         bind(u.m_cap_on, "speech_limit_enabled", "speech cap", bool)
@@ -398,6 +442,9 @@ def build(app):
              "characters rewritten per break", int, "release")
         bind(u.m_evolve_wait, "evolve_timeout_seconds",
              "how long to hold the next topic", float, "release")
+        bind(u.m_evolve_chars, "evolve_max_chars",
+             "evolved prompt size", int, "release")
+        bind(u.m_evolve_think, "evolve_think", "thinking during rewrites", bool)
         bind(u.m_adbreak, "adbreak_enabled", "ad break", bool)
         bind(u.m_ad_gain, "adbreak_music_gain", "music level", float, "release")
         bind(u.m_ad_prompt, "adbreak_prompt", "ad brief", None, "blur")
@@ -436,7 +483,7 @@ def build(app):
         # the handlers above, so a confirmation survives longer than 1.5s.
         outs = [u.sb_status, u.r_pipe, u.r_raw, u.r_transcript, u.run_topic, u.run_queue,
                 u.topic_queue_md, u.crowd_pending,
-                u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic,
+                u.dbg_voice, u.dbg_chat, u.dbg_norm, u.dbg_topic, u.dbg_comedy,
                 u.m_topic, u.m_topic_from,
                 u.dbg_services, u.dbg_log]
         assert len(outs) == len(FeedUpdate._fields)

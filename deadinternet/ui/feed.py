@@ -58,6 +58,7 @@ class FeedUpdate(NamedTuple):
     dbg_chat: Any
     dbg_norm: Any
     dbg_topic: Any
+    dbg_comedy: Any
     topic_box: Any     # Inputs tab text box -- only pushed when it changed
     topic_from: Any    # ...and who pinned it, on the same check
     services: Any      # Diagnostics: tts-server / LLM / this server
@@ -68,13 +69,18 @@ def queue_md(app):
     """Upcoming topics, so the rotation order is inspectable."""
     if not app.director:
         return "_(connect the bot to see the queue)_"
+    # A switch in progress goes on top: it is a minute of stages that make no
+    # sound, and without this a button press looks like it did nothing.
+    switching = app.director.switching.render()
+    head = [switching, "---"] if switching else []
     q = app.director.topic_queue()
     if not q:
-        return ("_No source is both enabled and stocked. Give one weight on "
-                "the Topics tab._")
+        return "\n\n".join(head + [
+            "_No source is both enabled and stocked. Give one weight on "
+            "the Topics tab._"])
     # Already-formatted markdown lines, not a numbered list -- the sources are
     # pools with weights, not a single ordered sequence.
-    return "\n\n".join(q[:24])
+    return "\n\n".join(head + q[:24])
 
 
 def crowd_md(app):
@@ -131,6 +137,7 @@ def poll(app, last_topic=None):
         dbg_chat=app.chat_report(),
         dbg_norm=app.norm_report(),
         dbg_topic=app.topic_report(),
+        dbg_comedy=app.comedy_report(),
         topic_box=topic_up,
         topic_from=from_up,
         services=app.service_report(),
