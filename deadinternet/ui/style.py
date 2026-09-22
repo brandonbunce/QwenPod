@@ -128,6 +128,70 @@ APP_CSS = """
   border-radius: var(--qp-radius-xs);
 }
 
+/* ---- help ------------------------------------------------------------- */
+/* One way to explain a control: the short line gradio draws under the label,
+   and a ? after the label for the rest. ui/help.py splits the info string in
+   the browser; this is what the pieces look like.
+ *
+ * The tooltip is a single node on <body>, fixed, because every gradio .block
+ * is overflow:auto and the container is overflow:hidden -- anything positioned
+ * inside a block is clipped at its edge. No ancestor uses transform, so fixed
+ * is safe, and theme variables are declared on :root, so it resolves them. */
+.qp-help-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.1em; height: 1.1em;
+  margin-left: 0.35em; padding: 0;
+  border: 1px solid var(--border-color-primary);
+  border-radius: 50%;
+  background: var(--background-fill-secondary);
+  color: var(--body-text-color-subdued);
+  font-size: var(--qp-fs-xs); line-height: 1;
+  cursor: help; vertical-align: middle;
+}
+.qp-help-btn:hover, .qp-help-btn:focus-visible {
+  color: var(--body-text-color);
+  border-color: var(--color-accent);
+  outline: none;
+}
+/* A Checkbox's label is a block-level flex row, so the ? fell onto its own
+   line underneath. Shrink the label to its content when a ? follows it. */
+label.checkbox-container:has(+ .qp-help-btn) { display: inline-flex; width: auto; }
+#qp-tip {
+  position: fixed; z-index: 10000; display: none;
+  padding: 0.5rem 0.7rem;
+  background: var(--background-fill-secondary);
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-drop-lg);
+  color: var(--body-text-color);
+  font-size: var(--qp-fs-sm); line-height: 1.45;
+  pointer-events: none;
+}
+#qp-tip.open { display: block; }
+#qp-tip code {
+  font-size: 0.9em; padding: 0.05em 0.3em;
+  background: var(--background-fill-primary);
+  border-radius: var(--qp-radius-xs);
+}
+#qp-tip strong { font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) {
+  #qp-tip.open { animation: qp-fade 0.12s ease-out; }
+}
+@keyframes qp-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- notes ------------------------------------------------------------ */
+/* The one shape of prose allowed between controls: a single subdued line, for
+   the components that cannot carry info= (buttons, audio, files). Anything
+   longer belongs in a tooltip or in DEADINTERNET.md. Markdown gets the class
+   on both .block and .prose, so the rule targets the paragraph. */
+.qp-note p {
+  margin: 0 0 0.35rem;
+  font-size: var(--qp-fs-sm);
+  line-height: 1.4;
+  color: var(--body-text-color-subdued);
+}
+.qp-note code { font-size: 0.9em; }
+
 /* ---- scrollbars ------------------------------------------------------- */
 /* Scoped to body and below, deliberately not :root. Gradio defines its theme
    variables on the container, so on <html> they still resolve to the LIGHT
@@ -190,6 +254,10 @@ body ::-webkit-scrollbar-corner { background: transparent; }
 .roster-bar label {
   white-space: nowrap;
 }
+/* The buttons that share the strip's row act on the whole roster. A Row
+   stretches its children to the tallest, which here is three rows of chips;
+   these sit centred at their own height instead. */
+.roster-tool { align-self: center !important; flex: 0 0 auto !important; }
 
 /* ---- scrolling read-only panes --------------------------------------- */
 .transcript-box, .queue-box, .topic-box, .status-box {

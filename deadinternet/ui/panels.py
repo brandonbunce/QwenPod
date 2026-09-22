@@ -16,6 +16,7 @@ from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
                          HeaderPanel, OutputsPanel, RunPanel, SpeakersPanel,
                          TopicPanel)
 from .feedback import tpl_vars
+from .help import help
 from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices, voice_choices
@@ -251,11 +252,12 @@ def build_generate(init_voices):
     with gr.Row():
         with gr.Column():
             g_text = gr.Textbox(label="Text", lines=4, value="Hello, this is a test.")
-            with gr.Row():
-                g_voice = gr.Dropdown(
-                    choices=init_voices, label="Voice", scale=4,
-                    value=init_voices[0] if init_voices else None)
-                g_refresh = gr.Button("Refresh voices", scale=1)
+            # Refresh voices is on the Speakers roster row, not here: it
+            # refills selectors on three tabs, and this tab is hidden
+            # while speech comes from a remote server.
+            g_voice = gr.Dropdown(
+                choices=init_voices, label="Voice",
+                value=init_voices[0] if init_voices else None)
             g_instruct = gr.Textbox(
                 label="Style instruction (CustomVoice/VoiceDesign only, rejected by Base)",
                 placeholder="e.g. speak slowly and warmly")
@@ -283,7 +285,6 @@ def build_generate(init_voices):
         g_audio=g_audio,
         g_status=g_status,
         g_voice=g_voice,
-        g_refresh=g_refresh,
         g_temp=g_temp,
         g_topk=g_topk,
         g_topp=g_topp,
@@ -446,6 +447,10 @@ def build_speakers(app):
     The roster was a vertical radio in a narrow left column, which pushed the
     editor into a single tall scroll. Laid flat it costs one row whatever the
     roster size, and the editor fits without scrolling.
+
+    Refresh voices and Export sit on the roster row because they act on the
+    whole roster, not on the speaker being edited. Refresh used to live on
+    Testing, which is hidden while speech comes from a remote server.
     """
     with gr.Group():
         with gr.Row():
@@ -457,21 +462,30 @@ def build_speakers(app):
                 choices=roster_choices(app), value=NEW, label=None,
                 container=False, scale=20, elem_classes=["roster-bar"])
             s_next = gr.Button("›", scale=0, min_width=44)
+            s_refresh = gr.Button("Refresh voices", size="sm", scale=0,
+                                  min_width=120, elem_classes=["roster-tool"])
+            s_export = gr.Button("Export all (.zip)", size="sm", scale=0,
+                                 min_width=120, elem_classes=["roster-tool"])
+    # Hidden until there is something in it: an empty file box reads as a
+    # drop target, which this is not.
+    s_export_file = gr.File(label="Voice export", visible=False,
+                            interactive=False)
 
     with gr.Row(equal_height=False):
         with gr.Column(scale=1):
             s_name = gr.Textbox(label="Name")
             s_clip = gr.Audio(label="Reference clip", type="filepath")
+            # Audio takes no info=, so this is the one note on the tab.
             gr.Markdown(
-                "_To trim: click the scissors icon to select a range, drag on the "
-                "waveform to highlight it, then click the small **Trim** button that "
-                "appears. Dragging alone does nothing - clicking Trim without a "
-                "highlighted range also does nothing, silently._")
+                "To trim: click the scissors, drag a range on the waveform, "
+                "then press the small Trim button that appears.",
+                elem_classes=["qp-note"])
             s_reftext = gr.Textbox(
                 label="Reference transcript (optional)", lines=3,
-                info="Filled in by whisper.cpp when you add a clip. Check it "
-                     "before saving - a wrong word makes the clone worse and "
-                     "nothing else reports it.")
+                info=help("Filled in by whisper when you add a clip. Check it "
+                          "before saving.",
+                          "A wrong word makes the clone worse, and nothing "
+                          "else reports it."))
             # Also a button, because the automatic pass only fires on a clip
             # you just added: selecting a speaker off the roster loads their
             # saved clip without re-transcribing it.
@@ -481,18 +495,21 @@ def build_speakers(app):
             # server actually has, with free text for a name it does not have
             # yet. Empty means "same as the name above".
             s_server_voice = gr.Dropdown(
-                choices=voice_choices(app), value=None, label="Voice on the server",
-                allow_custom_value=True, info="Leave empty when the server "
-                "knows this speaker by the name above. A remote server has its "
-                "own names - pick theirs here and the roster keeps ours.")
+                choices=voice_choices(app), value=None,
+                label="Voice on the server", allow_custom_value=True,
+                info=help("Leave empty when the server knows this speaker by "
+                          "the name above.",
+                          "A remote server has its own names. Pick theirs "
+                          "here and the roster keeps ours."))
 
         with gr.Column(scale=1):
             s_persona = gr.Textbox(
                 label="Base system prompt", lines=6,
                 placeholder="You are Dave. You are relentlessly upbeat and "
                             "derail every topic into cycling.",
-                info="Yours. The app never rewrites this - it is the anchor "
-                     "every evolution starts from, and what Reset returns to.")
+                info=help("Yours. The app never rewrites this.",
+                          "It is the anchor every evolution starts from, and "
+                          "what Reset returns to."))
             # Display-only. Written by the evolution pass between topics, and
             # deliberately not an input to Save: a rewrite can land between
             # this box rendering and you pressing Save, and taking the value
@@ -500,9 +517,10 @@ def build_speakers(app):
             s_dynamic = gr.Textbox(
                 label="Dynamic system prompt", lines=6, interactive=False,
                 placeholder="(not evolved yet - the base prompt is in use)",
-                info="Rewritten between topics from what this character "
-                     "actually said. While it has anything in it, this is what "
-                     "the model is told to be.")
+                info=help("Rewritten between topics from what this character "
+                          "actually said.",
+                          "While it has anything in it, this is what the "
+                          "model is told to be."))
             with gr.Row():
                 s_reset_dynamic = gr.Button("Reset dynamic to base", size="sm")
                 s_sharpen = gr.Button("Sharpen base for comedy", size="sm")
@@ -510,57 +528,54 @@ def build_speakers(app):
                 label="Lines in their voice", lines=5,
                 placeholder="I paid four hundred dollars for that sandwich and "
                             "I would do it again.\nDon't talk to me about Gary.",
-                info="Things this character would actually say, one per line. "
-                     "A few are shown to the model each turn as the sound of "
-                     "the voice - at this model size that does more than any "
-                     "description. Never rewritten by evolution. \"Sharpen\" "
-                     "has the model restate the base prompt as a want, a flaw "
-                     "and a wrong belief instead of adjectives; it only fills "
-                     "the box, so read it before you save.")
-            with gr.Group():
-                gr.Markdown(
-                    "**Build a persona from their Discord history.** Reads this "
-                    f"person's messages from the last {PERSONA_YEARS:g} years, "
-                    f"samples {PERSONA_SAMPLES} at random, and has the LLM write "
-                    "a system prompt from how they actually talk. The sampled "
-                    "messages are quoted in the prompt too. Overwrites the box "
-                    "above - it is not saved until you press **Save speaker**."
-                )
+                info=help("Things this character would actually say, one per "
+                          "line.",
+                          "A few are shown to the model each turn as the sound "
+                          "of the voice; at this model size that does more "
+                          "than any description. Never rewritten by "
+                          "evolution. *Sharpen* has the model restate the base "
+                          "prompt as a want, a flaw and a wrong belief instead "
+                          "of adjectives. It only fills the box, so read it "
+                          "before you save."))
+            with gr.Accordion("Vocal stims", open=False):
+                s_stims = gr.Textbox(
+                    label="Phrases", lines=3,
+                    placeholder="jellyfishing\nI'm ready\nbarnacles",
+                    info=help("Catchphrases this character blurts out. One "
+                              "per line.",
+                              "Commas work too. One is picked at random when "
+                              "the roll succeeds."))
+                s_stim_pct = gr.Slider(
+                    0, 100, value=0, step=5, label="Stim chance (%)",
+                    info=help("Share of this speaker's turns that carry a "
+                              "stim. 0 disables.",
+                              "The model is asked to work it in; if it "
+                              "ignores that, the phrase is appended so a "
+                              "successful roll always lands."))
+            with gr.Accordion("Build a persona from Discord history", open=False):
                 with gr.Row():
                     s_handle = gr.Textbox(
                         label="Discord handle", scale=3,
-                        placeholder="username, display name, or user ID")
+                        placeholder="username, display name, or user ID",
+                        info=help(f"Reads their last {PERSONA_YEARS:g} years "
+                                  f"of messages, samples {PERSONA_SAMPLES}, "
+                                  "and writes a base prompt from how they "
+                                  "talk.",
+                                  "The sampled messages are quoted in the "
+                                  "prompt too. Overwrites the base prompt "
+                                  "above; nothing is saved until you press "
+                                  "**Save speaker**."))
                     s_mine = gr.Button("Build persona", scale=1)
-            s_stims = gr.Textbox(
-                label="Vocal stims", lines=3,
-                placeholder="jellyfishing\nI'm ready\nbarnacles",
-                info="Catchphrases this character blurts out. One per line "
-                     "(commas work too); one is picked at random when the roll "
-                     "succeeds.")
-            s_stim_pct = gr.Slider(
-                0, 100, value=0, step=5, label="Stim chance (%)",
-                info="Share of this speaker's turns that carry a stim. 0 disables. "
-                     "The model is asked to work it in; if it ignores that, the "
-                     "phrase is appended so a successful roll always lands.")
             with gr.Row():
                 s_save = gr.Button("Save speaker", variant="primary")
-                s_delete = gr.Button("Delete")
-            with gr.Group():
-                gr.Markdown(
-                    "**Export every voice.** One zip with each speaker's "
-                    "reference clip as the server hears it (mono, 16-bit, "
-                    "24 kHz), their transcript, and a manifest. Clips and "
-                    "transcripts only - no personas, settings or logs.")
-                s_export = gr.Button("Download all voices (.zip)", size="sm")
-                # Hidden until there is something in it: an empty file box
-                # reads as a drop target, which this is not.
-                s_export_file = gr.File(label="Voice export", visible=False,
-                                        interactive=False)
+                s_delete = gr.Button("Delete", variant="stop", scale=0,
+                                     min_width=110)
 
     return SpeakersPanel(
         s_roster=s_roster,
         s_prev=s_prev,
         s_next=s_next,
+        s_refresh=s_refresh,
         s_name=s_name,
         s_clip=s_clip,
         s_reftext=s_reftext,

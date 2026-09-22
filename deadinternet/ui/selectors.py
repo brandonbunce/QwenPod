@@ -50,18 +50,19 @@ def roster_choices(app):
     state = app.state
     with state.lock:
         speakers = list(state.speakers)
+    # The chip carries only what you cannot see once it is selected: whether
+    # the speaker is on air, and whether there is a clip to speak with. Stims
+    # and a persona excerpt used to be on it too, which made forty chips read
+    # as a wall; they are in the editor the moment the chip is clicked.
     out = [(NEW, NEW)]
     for s in speakers:
-        tics = s.stim_list()
-        bits = ["on" if s.enabled else "off"]
-        if tics and s.stim_chance:
-            bits.append(f"{tics[0][:14]}{'+' if len(tics) > 1 else ''} @{s.stim_chance:g}%")
+        bits = []
+        if s.enabled:
+            bits.append("on")
         if not s.ref_wav:
             bits.append("no clip")
-        persona = (s.persona or "").strip().replace("\n", " ")
-        if persona:
-            bits.append(persona[:40] + ("..." if len(persona) > 40 else ""))
-        out.append((f"{s.name}  ·  " + "  ·  ".join(bits), s.name))
+        label = s.name if not bits else f"{s.name}  ·  " + "  ·  ".join(bits)
+        out.append((label, s.name))
     return out
 
 

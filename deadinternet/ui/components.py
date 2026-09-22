@@ -68,7 +68,6 @@ class GeneratePanel:
     g_audio: Any
     g_status: Any
     g_voice: Any
-    g_refresh: Any
     g_temp: Any
     g_topk: Any
     g_topp: Any
@@ -111,6 +110,7 @@ class SpeakersPanel:
     s_roster: Any
     s_prev: Any
     s_next: Any
+    s_refresh: Any
     s_name: Any
     s_clip: Any
     s_reftext: Any

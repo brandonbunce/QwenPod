@@ -22,6 +22,7 @@ from .feed import FeedUpdate
 from .feed import poll as _poll
 from .feed import stream_status as _stream_status
 from .feed import stream_voice_boot as _stream_voice_boot
+from .help import HELP_JS
 from .mic import MIC_JS
 from .rosterscroll import ROSTER_SCROLL_JS
 from .panels import (build_behaviour, build_diagnostics, build_generate,
@@ -99,8 +100,9 @@ def build(app):
         u.sb_action = header.sb_action
         u.hdr_refresh = header.hdr_refresh
 
-        with gr.Tabs():
-            with gr.Tab("Run"):
+        with gr.Tabs() as main_tabs:
+            u.main_tabs = main_tabs
+            with gr.Tab("Run", id="run"):
                 run = build_run(app, init_names)
                 u.m_mode = run.m_mode
                 u.run_topic = run.run_topic
@@ -120,11 +122,12 @@ def build(app):
                 u.man_text = run.man_text
                 u.man_go = run.man_go
                 u.man_mic = run.man_mic
-            with gr.Tab("Speakers"):
+            with gr.Tab("Speakers", id="speakers"):
                 speakers = build_speakers(app)
                 u.s_roster = speakers.s_roster
                 u.s_prev = speakers.s_prev
                 u.s_next = speakers.s_next
+                u.s_refresh = speakers.s_refresh
                 u.s_name = speakers.s_name
                 u.s_clip = speakers.s_clip
                 u.s_reftext = speakers.s_reftext
@@ -143,7 +146,7 @@ def build(app):
                 u.s_export_file = speakers.s_export_file
                 u.s_handle = speakers.s_handle
                 u.s_mine = speakers.s_mine
-            with gr.Tab("Inputs"):
+            with gr.Tab("Inputs", id="inputs"):
                 topic = build_topic(app)
                 u.m_topic_from = topic.m_topic_from
                 u.topic_queue_md = topic.topic_queue_md
@@ -169,7 +172,7 @@ def build(app):
                 u.m_rot_next = topic.m_rot_next
                 u.crowd_clear = topic.crowd_clear
                 u.crowd_max = topic.crowd_max
-            with gr.Tab("Outputs"):
+            with gr.Tab("Outputs", id="outputs"):
                 outputs = build_outputs(app)
                 u.d_connect = outputs.d_connect
                 u.d_channel = outputs.d_channel
@@ -196,7 +199,7 @@ def build(app):
                 u.t_where = outputs.t_where
                 u.t_url = outputs.t_url
                 u.t_use = outputs.t_use
-            with gr.Tab("Behaviour"):
+            with gr.Tab("Behaviour", id="behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
                 u.m_open_on = behaviour.m_open_on
@@ -246,7 +249,8 @@ def build(app):
                 u.m_queue_max = behaviour.m_queue_max
                 u.m_rejoin = behaviour.m_rejoin
                 u.m_pause_empty = behaviour.m_pause_empty
-            with gr.Tab("Testing"):
+            with gr.Tab("Testing", id="testing") as tab_testing:
+                u.tab_testing = tab_testing
                 gen = build_generate(init_voices)
                 u.g_text = gen.g_text
                 u.g_instruct = gen.g_instruct
@@ -254,14 +258,13 @@ def build(app):
                 u.g_audio = gen.g_audio
                 u.g_status = gen.g_status
                 u.g_voice = gen.g_voice
-                u.g_refresh = gen.g_refresh
                 u.g_temp = gen.g_temp
                 u.g_topk = gen.g_topk
                 u.g_topp = gen.g_topp
                 u.g_rep = gen.g_rep
                 u.g_seed = gen.g_seed
                 u.g_max = gen.g_max
-            with gr.Tab("Diagnostics"):
+            with gr.Tab("Diagnostics", id="diagnostics"):
                 diag = build_diagnostics(app)
                 u.dbg_voice = diag.voice
                 u.dbg_chat = diag.chat
@@ -294,7 +297,7 @@ def build(app):
         # control. Assert what can be asserted; the field names carry the rest.
         sel_out = [u.g_voice, u.s_roster, u.man_speaker, u.r_enabled]
         assert len(sel_out) == len(SelectorUpdates._fields)
-        u.g_refresh.click(bound(t_voices.refresh_voices, app), None, sel_out + [u.g_status])
+        u.s_refresh.click(bound(t_voices.refresh_voices, app), None, sel_out + [u.sb_action])
         u.d_connect.click(bound(t_discord.connect_bot, app), None, [u.d_channel, u.m_rot_chans, u.sb_action])
         u.d_join.click(bound(t_discord.join_channel, app), u.d_channel, u.sb_action)
         u.d_leave.click(bound(t_discord.leave_channel, app), None, u.sb_action)
@@ -516,5 +519,6 @@ def build(app):
         demo.load(None, None, None, js=AUTOSCROLL_JS)
         demo.load(None, None, None, js=MIC_JS)
         demo.load(None, None, None, js=ROSTER_SCROLL_JS)
+        demo.load(None, None, None, js=HELP_JS)
 
     return demo
