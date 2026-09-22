@@ -39,7 +39,7 @@ from deadinternet.pipeline import Pipeline
 from deadinternet.rawfeed import NULL_TAP, RawFeed
 from deadinternet.transcribe import Whisper
 from deadinternet.tts import TTSClient
-from deadinternet.ui import APP_CSS, build
+from deadinternet.ui import APP_CSS, APP_THEME, build
 
 # How long to wait for a freshly launched tts-server to answer.
 TTS_BOOT_TIMEOUT = 120
@@ -1169,9 +1169,10 @@ def main():
     # take a couple of minutes to answer on a cold model.
     app.start_tts_boot(autostart=not args.no_tts_autostart)
     demo = build(app)
-    # css belongs to launch() in gradio 6, not the Blocks constructor.
+    # css and theme belong to launch() in gradio 6, not the Blocks constructor.
     demo.queue(default_concurrency_limit=4).launch(
-        server_name=args.host, server_port=args.port, css=APP_CSS)
+        server_name=args.host, server_port=args.port, css=APP_CSS,
+        theme=APP_THEME)
     return 0
 
 

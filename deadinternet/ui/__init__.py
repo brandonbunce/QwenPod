@@ -7,5 +7,6 @@ app.py while the pieces move underneath it.
 """
 from .blocks import build
 from .style import APP_CSS
+from .theme import APP_THEME
 
-__all__ = ["APP_CSS", "build"]
+__all__ = ["APP_CSS", "APP_THEME", "build"]
