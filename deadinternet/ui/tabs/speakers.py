@@ -13,7 +13,7 @@ from ... import voiceexport
 from ..feed import MINE_POLL
 from ..feedback import note, warn
 from ..selectors import (NEW, roster_choices, selector_updates,
-                         selectors_unchanged)
+                         selectors_unchanged, voice_choices)
 
 
 # Shown in the dynamic box when a character has not evolved yet. Not a real
@@ -23,7 +23,7 @@ NO_DYNAMIC = ""
 
 def load_speaker(app, sel):
     state = app.state
-    blank = ("", None, "", "", NO_DYNAMIC, "", "", 0)
+    blank = ("", None, "", "", NO_DYNAMIC, "", "", 0, "")
     if not sel or sel == NEW:
         return (*blank, "New speaker - fill in the form and press Save.")
     sp = state.get(sel)
@@ -31,10 +31,12 @@ def load_speaker(app, sel):
         return (*blank, "Not found.")
     clip = sp.ref_wav if sp.ref_wav and os.path.exists(sp.ref_wav) else None
     return (sp.name, clip, sp.ref_text, sp.persona, sp.dynamic_persona,
-            sp.sample_lines, sp.stims, sp.stim_chance, f"Editing **{sp.name}**.")
+            sp.sample_lines, sp.stims, sp.stim_chance, sp.server_voice,
+            f"Editing **{sp.name}**.")
 
 
-def save_speaker(app, name, clip, ref_text, persona, samples, stims, stim_pct):
+def save_speaker(app, name, clip, ref_text, persona, samples, stims, stim_pct,
+                 server_voice=""):
     state, tts = app.state, app.tts
     name = (name or "").strip()
     if not name:
@@ -49,12 +51,17 @@ def save_speaker(app, name, clip, ref_text, persona, samples, stims, stim_pct):
         # what gets re-registered after a server restart.
         data, sr = sf.read(clip, always_2d=True)
         sf.write(stored, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
-    if not stored:
+    server_voice = (server_voice or "").strip()
+    if not stored and not server_voice:
+        # A speaker on a remote server needs no clip here: the voice is
+        # already over there, and the clip is only ever used to upload one.
         return (*selectors_unchanged(),
-                warn("Upload a reference clip for this speaker."))
+                warn("Upload a reference clip for this speaker, or give the "
+                     "name its voice has on the server."))
 
     sp = Speaker(
         name=name, ref_wav=stored, ref_text=(ref_text or "").strip(),
+        server_voice=server_voice,
         # Read from the stored speaker, never from the form. The dynamic box
         # is display-only and a rewrite can land between the page rendering it
         # and you pressing Save -- taking it from the form would quietly undo
@@ -69,8 +76,17 @@ def save_speaker(app, name, clip, ref_text, persona, samples, stims, stim_pct):
         sample_lines=(samples or "").strip(),
     )
     state.upsert(sp)
-    ok, msg = tts.register(name, stored, sp.ref_text, force=True)
     out = selector_updates(app, sel=name, man=name)
+    if tts.read_only:
+        # Speech is coming from someone else's server; saying "registration
+        # failed" would read as a fault when it is the arrangement.
+        live = sp.voice_name() in set(voice_choices(app))
+        if live:
+            return (*out, note(f"Saved '{name}' - speaking as "
+                               f"`{sp.voice_name()}`."))
+        return (*out, warn(f"Saved '{name}', but `{sp.voice_name()}` is not on "
+                           f"{tts.base_url}. Pick the name it has there."))
+    ok, msg = tts.register(sp.voice_name(), stored, sp.ref_text, force=True)
     if ok:
         return (*out, note(f"Saved '{name}'."))
     return (*out, warn(f"Saved '{name}' but registration failed - {msg}"))
@@ -159,8 +175,9 @@ def delete_speaker(app, sel):
     state, tts = app.state, app.tts
     if not sel or sel == NEW:
         return (*selectors_unchanged(), warn("Nothing selected."))
+    sp = state.get(sel)
     state.remove(sel)
-    tts.forget(sel)
+    tts.forget(sp.voice_name() if sp else sel)
     stored = os.path.join(VOICES_DIR, f"{sel}.wav")
     if os.path.exists(stored):
         os.remove(stored)

@@ -561,7 +561,7 @@ class Director:
             return None
 
         try:
-            wav = await loop.run_in_executor(None, lambda: self._synth(text, speaker.name))
+            wav = await loop.run_in_executor(None, lambda: self._synth(text, speaker.voice_name()))
         except Exception as e:
             self.log(f"[director] tts failed for {speaker.name}: {e}")
             return None
@@ -964,7 +964,7 @@ class Director:
                     pin, pin.has_image, prep.description, speaker.name)
                 try:
                     prep.wav = await loop.run_in_executor(
-                        None, lambda: self._synth(prep.line, speaker.name))
+                        None, lambda: self._synth(prep.line, speaker.voice_name()))
                 except Exception as e:
                     # Not fatal: the switch re-synthesises inline.
                     self.log(f"[topic] could not pre-synthesise the announcement: {e}")
@@ -1201,7 +1201,7 @@ class Director:
             return
         loop = asyncio.get_running_loop()
         try:
-            wav = await loop.run_in_executor(None, lambda: self._synth(line, speaker.name))
+            wav = await loop.run_in_executor(None, lambda: self._synth(line, speaker.voice_name()))
         except Exception as e:
             self.log(f"[director] could not speak the opening: {e}")
             return
@@ -1271,7 +1271,7 @@ class Director:
             loop = asyncio.get_running_loop()
             try:
                 wav = await loop.run_in_executor(
-                    None, lambda: self._synth(line, speaker.name))
+                    None, lambda: self._synth(line, speaker.voice_name()))
             except Exception as e:
                 self.log(f"[topic] could not announce: {e}")
                 return
@@ -1453,7 +1453,7 @@ class Director:
             self.log(f"[director] no voice called {name} - nothing said")
             return None
         loop = asyncio.get_running_loop()
-        return loop.run_in_executor(None, lambda: self._synth(text, speaker.name))
+        return loop.run_in_executor(None, lambda: self._synth(text, speaker.voice_name()))
 
     async def _collect(self, task):
         if task is None:
@@ -1509,7 +1509,7 @@ class Director:
             return
         loop = asyncio.get_running_loop()
         try:
-            wav = await loop.run_in_executor(None, lambda: self._synth(text, speaker.name))
+            wav = await loop.run_in_executor(None, lambda: self._synth(text, speaker.voice_name()))
         except Exception as e:
             self.log(f"[director] manual tts failed: {e}")
             return
@@ -1767,7 +1767,7 @@ class Director:
         loop = asyncio.get_running_loop()
         try:
             wav = await loop.run_in_executor(
-                None, lambda: self._synth(line, speaker.name))
+                None, lambda: self._synth(line, speaker.voice_name()))
         except Exception as e:
             self.log(f"[director] could not speak the goodbye: {e}")
             return

@@ -164,12 +164,16 @@ is local, and `localhost.example.com` is not.
 
 Worth knowing:
 
-- **The roster is re-registered against whichever server is selected.** Voices
-  live in the server's memory, so switching re-uploads every reference clip.
-  That runs in the background; watch **Diagnostics**, then **Refresh voices**.
+- **A remote server is read-only.** Its voices belong to whoever else uses it,
+  so the app speaks through them and never uploads over them: `register` and
+  `forget` both refuse, which means deleting a speaker from this roster cannot
+  delete a voice out from under anyone. Only a local tts-server gets the roster
+  uploaded to it.
 - **Nothing is started for you on the far end.** If it is not answering, the
   switch still happens and says so, because the alternative is quietly
   continuing to speak through the old server.
+- **A speaker whose voice is not there is named at boot** (`no voice called
+  'Bjork' on ...`) rather than failing later, mid-line.
 - **Backend (GPU/CPU), Restart and Stop only ever act on tts-server here**, and
   refuse while speech is pointed elsewhere rather than restarting a server that
   nothing is speaking through. Autostart is skipped for the same reason.
@@ -908,6 +912,24 @@ that instruction is the thing to strengthen.
 
 Nothing is saved until you press **Save speaker**. The name field is filled in
 only when it was empty, so it cannot silently retarget an existing speaker.
+
+### When the server calls a voice something else
+
+A remote tts-server has its own namespace. Ours has **Warden (Deadlock)**;
+`voice.example.internal` has `deadlock_warden`, `tf2_heavy_weapons_guy`,
+`persona_joe_rogan`, `irl_chris_dyer` — source prefix, then the name. The
+roster does not follow that convention, because its names are what the UI, the
+feed, the transcript and every persona use.
+
+So the registration gives way instead: **Voice on the server** in the speaker
+editor holds the name that server knows this voice by, and `Speaker.voice_name()`
+— `server_voice` or, when empty, `name` — is what every synth and register call
+asks for. Empty is the local case, where the two are the same.
+
+The box is a dropdown of what the current server actually has, and accepts a
+name it does not have yet. A speaker with a server voice needs no reference
+clip here: the voice is already over there, and the clip is only ever used to
+upload one.
 
 ### Downloading the voices
 

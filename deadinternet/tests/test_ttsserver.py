@@ -104,6 +104,59 @@ def test_local_only_actions_refuse_a_remote_server():
     assert app.state.settings.tts_device == "gpu"
 
 
+def test_voice_name_resolution():
+    from deadinternet.config import Speaker
+    assert Speaker(name="Bjork").voice_name() == "Bjork"
+    assert Speaker(name="Warden (Deadlock)",
+                   server_voice="deadlock_warden").voice_name() == "deadlock_warden"
+    # Whitespace is not a server name.
+    assert Speaker(name="Bjork", server_voice="  ").voice_name() == "Bjork"
+
+
+def _client(base_url, live=()):
+    from deadinternet.tts import TTSClient
+    c = TTSClient(base_url)
+    c.server_voices = lambda: list(live)
+    c.deleted = []
+    c.http.delete = lambda url, timeout=30: c.deleted.append(url)
+    return c
+
+
+def test_remote_server_is_read_only():
+    from deadinternet.config import Speaker
+    c = _client(REMOTE, live=["deadlock_warden"])
+    assert c.read_only
+
+    ok, msg = c.register("anything", "/nonexistent.wav")
+    assert not ok and "managed on that server" in msg
+
+    # A voice that is there is used; one that is not is reported, not uploaded.
+    problems = c.ensure_registered([
+        Speaker(name="Warden (Deadlock)", server_voice="deadlock_warden"),
+        Speaker(name="Bjork", ref_wav="/nonexistent.wav"),
+    ])
+    assert problems == ["Bjork: no voice called 'Bjork' on " + REMOTE]
+    assert "deadlock_warden" in c._registered
+
+    # Deleting a speaker here must not delete the voice over there.
+    c.forget("deadlock_warden")
+    assert c.deleted == [] and "deadlock_warden" not in c._registered
+
+
+def test_local_server_still_uploads():
+    from deadinternet.config import Speaker
+    c = _client(LOCAL_TTS_URL, live=[])
+    assert not c.read_only
+    uploaded = []
+    c.register = lambda name, wav, text="", force=False: (
+        uploaded.append((name, wav)) or (True, "registered"))
+    c.ensure_registered([Speaker(name="Big Dave", server_voice="irl_big_dave",
+                                 ref_wav="/tmp/a.wav")])
+    # Even locally, the server name is the one registered -- otherwise the
+    # voice would be uploaded under one name and asked for under another.
+    assert uploaded == [("irl_big_dave", "/tmp/a.wav")]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

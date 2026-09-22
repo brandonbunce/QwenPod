@@ -12,6 +12,7 @@ import threading
 import requests
 import soundfile as sf
 
+from .config import is_local_tts
 from .pipeline import NULL_PIPELINE, TTS
 
 
@@ -61,9 +62,22 @@ class TTSClient:
         except Exception:
             return f"HTTP {resp.status_code}: {resp.text[:200]}"
 
+    @property
+    def read_only(self) -> bool:
+        """A tts-server on another machine holds voices for whoever else uses
+        it. We speak through those; we do not upload over them."""
+        return not is_local_tts(self.base_url)
+
     # ---- registration --------------------------------------------------
     def register(self, name: str, wav_path: str, ref_text: str = "", force: bool = False):
-        """Register a clone. Returns (ok, message)."""
+        """Register a clone. Returns (ok, message).
+
+        Refuses on a remote server, at this one choke point rather than at
+        each caller: every upload in the app arrives here.
+        """
+        if self.read_only:
+            return False, (f"{self.base_url} is not this machine - voices "
+                           "there are managed on that server")
         with self._lock:
             if name in self._registered and not force:
                 return True, "cached"
@@ -86,18 +100,29 @@ class TTSClient:
         return True, "registered"
 
     def ensure_registered(self, speakers) -> list:
-        """Re-register every speaker that the server doesn't already know."""
+        """Make every speaker speakable on the current server. -> problems.
+
+        Locally that means uploading whatever is missing. On a remote server
+        it means checking: a speaker whose voice is not there is reported by
+        name, which is the whole diagnosis -- either the voice is called
+        something else over there, or nobody has made it yet.
+        """
         try:
             live = set(self.server_voices())
         except requests.RequestException as e:
             return [f"tts-server unreachable: {e}"]
         problems = []
         for sp in speakers:
-            if sp.name in live:
+            voice = sp.voice_name()
+            if voice in live:
                 with self._lock:
-                    self._registered.add(sp.name)
+                    self._registered.add(voice)
                 continue
-            ok, msg = self.register(sp.name, sp.ref_wav, sp.ref_text, force=True)
+            if self.read_only:
+                problems.append(f"{sp.name}: no voice called '{voice}' on "
+                                f"{self.base_url}")
+                continue
+            ok, msg = self.register(voice, sp.ref_wav, sp.ref_text, force=True)
             if not ok:
                 problems.append(f"{sp.name}: {msg}")
         return problems
@@ -113,8 +138,13 @@ class TTSClient:
             self._registered.clear()
 
     def forget(self, name: str):
+        """Drop a voice. Local only -- deleting a speaker from this roster must
+        not delete a voice out from under everyone else using a shared
+        server, so on a remote one this forgets the cache entry and stops."""
         with self._lock:
             self._registered.discard(name)
+        if self.read_only:
+            return
         try:
             self.http.delete(f"{self.base_url}/v1/audio/voices/{name}", timeout=30)
         except requests.RequestException:

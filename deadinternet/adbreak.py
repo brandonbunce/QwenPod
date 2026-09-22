@@ -147,7 +147,7 @@ class AdBreak:
 
         try:
             wav = await loop.run_in_executor(
-                None, lambda: self.synth(text, reader.name))
+                None, lambda: self.synth(text, reader.voice_name()))
         except Exception as e:
             self.debug["last_error"] = f"could not synthesise the ad: {e}"
             self.log(f"[adbreak] skipped - {e}")
@@ -211,7 +211,7 @@ class AdBreak:
             return False
         try:
             wav = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: self.synth(line, reader.name))
+                None, lambda: self.synth(line, reader.voice_name()))
         except Exception as e:
             # Not fatal, and deliberately not an early return from play(): the
             # ad is already being written and is worth playing on its own.

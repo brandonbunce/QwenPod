@@ -18,7 +18,7 @@ from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
 from .feedback import tpl_vars
 from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
-from .selectors import NEW, roster_choices
+from .selectors import NEW, roster_choices, voice_choices
 from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
                       RECOMMENDED, TTS_DEVICES, TTS_HERE, TTS_REMOTE,
                       TTS_WHERE, is_local_tts)
@@ -476,6 +476,15 @@ def build_speakers(app):
             # you just added: selecting a speaker off the roster loads their
             # saved clip without re-transcribing it.
             s_transcribe = gr.Button("Transcribe clip", size="sm")
+            # Only interesting when speech comes from a server that names its
+            # voices differently -- which is why it is a dropdown of what that
+            # server actually has, with free text for a name it does not have
+            # yet. Empty means "same as the name above".
+            s_server_voice = gr.Dropdown(
+                choices=voice_choices(app), value=None, label="Voice on the server",
+                allow_custom_value=True, info="Leave empty when the server "
+                "knows this speaker by the name above. A remote server has its "
+                "own names - pick theirs here and the roster keeps ours.")
 
         with gr.Column(scale=1):
             s_persona = gr.Textbox(
@@ -556,6 +565,7 @@ def build_speakers(app):
         s_clip=s_clip,
         s_reftext=s_reftext,
         s_transcribe=s_transcribe,
+        s_server_voice=s_server_voice,
         s_persona=s_persona,
         s_dynamic=s_dynamic,
         s_reset_dynamic=s_reset_dynamic,

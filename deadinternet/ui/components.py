@@ -115,6 +115,7 @@ class SpeakersPanel:
     s_clip: Any
     s_reftext: Any
     s_transcribe: Any
+    s_server_voice: Any
     s_persona: Any
     s_dynamic: Any
     s_reset_dynamic: Any

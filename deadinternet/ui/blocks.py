@@ -129,6 +129,7 @@ def build(app):
                 u.s_clip = speakers.s_clip
                 u.s_reftext = speakers.s_reftext
                 u.s_transcribe = speakers.s_transcribe
+                u.s_server_voice = speakers.s_server_voice
                 u.s_persona = speakers.s_persona
                 u.s_dynamic = speakers.s_dynamic
                 u.s_reset_dynamic = speakers.s_reset_dynamic
@@ -326,10 +327,10 @@ def build(app):
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,
                           [u.s_name, u.s_clip, u.s_reftext, u.s_persona,
                            u.s_dynamic, u.s_samples, u.s_stims, u.s_stim_pct,
-                           u.sb_action])
+                           u.s_server_voice, u.sb_action])
         u.s_save.click(bound(t_speakers.save_speaker, app),
                        [u.s_name, u.s_clip, u.s_reftext, u.s_persona,
-                        u.s_samples, u.s_stims, u.s_stim_pct],
+                        u.s_samples, u.s_stims, u.s_stim_pct, u.s_server_voice],
                        sel_out + [u.sb_action])
         u.s_sharpen.click(bound(t_speakers.sharpen_persona, app),
                           [u.s_name, u.s_persona], [u.s_persona, u.sb_action])

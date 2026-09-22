@@ -270,6 +270,13 @@ class Speaker:
     # in an existing roster raises TypeError straight out of State.__init__ and
     # the app does not start. Adding is safe, renaming is not.
     dynamic_persona: str = ""
+    # What this voice is called on the tts-server, when that differs from the
+    # speaker's name. A remote server is somebody else's namespace -- ours has
+    # "Warden (Deadlock)", theirs has deadlock_warden -- and the name in the
+    # roster is the one the UI, the transcript and every persona use, so it is
+    # the registration that gives way, not the display name. Empty means the
+    # two are the same, which is the local case.
+    server_voice: str = ""
     enabled: bool = True
     # Verbal tic: catchphrases this character blurts out. One per line (commas
     # also accepted), picked at random when the roll succeeds.
@@ -292,6 +299,12 @@ class Speaker:
         """
         src = (self.dynamic_persona or "").strip() or self.persona or DEFAULT_PERSONA
         return src.replace("{name}", self.name)
+
+    def voice_name(self) -> str:
+        """What to ask the tts-server for. Every synth and register goes
+        through this rather than reading .name, so a re-pointed speaker
+        follows everywhere at once."""
+        return (self.server_voice or "").strip() or self.name
 
     def stim_list(self):
         raw = (self.stims or "").replace(",", "\n")
