@@ -154,6 +154,12 @@ def stop_tts(app):
     are not the same statement, and the second one is the one being asked for.
     """
     from ...config import vram_info
+    s = app.state.settings
+    if not is_local_tts(s.tts_url):
+        # The button is off the page while speech is remote; this is for a
+        # stale page. Going remote already stopped the server here.
+        return warn(f"Speech comes from {s.tts_url} - tts-server on this "
+                    "machine is not in use, and was stopped when you switched.")
     before = vram_info()
     try:
         ok, msg = app.stop_tts_server()

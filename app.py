@@ -295,13 +295,14 @@ class DeadInternetApp:
         return found
 
     def stop_tts_server(self, timeout=15.0):
-        """Stop tts-server and wait for it to actually let go of the card."""
-        s = self.state.settings
-        if not is_local_tts(s.tts_url):
-            # Same guard as restart: this only ever acts on this machine, and
-            # stopping a server nothing is speaking through helps nobody.
-            return False, (f"speech engine is set to {s.tts_url} - this "
-                           "button is for tts-server on this machine.")
+        """Stop tts-server on this machine and wait for it to actually let
+        go of the card.
+
+        No check on where speech is pointed: this acts on local processes
+        whatever the setting says, because the case that needs it most is
+        speech pointed elsewhere while a server here still holds the card.
+        The Stop button's handler does its own refusing.
+        """
         pids = self.tts_pids()
         if not pids:
             self._tts_proc = None
@@ -326,6 +327,29 @@ class DeadInternetApp:
         time.sleep(1.5)
         return True, f"Stopped tts-server ({len(pids)} process(es))."
 
+    def stop_local_tts_if_remote(self):
+        """Speech comes from another machine: a tts-server here is holding
+        6.5 GB of the card for nothing. -> a sentence, or "" if there was
+        nothing to stop.
+
+        Called when the setting changes and at boot, so a server left running
+        by an earlier session, or by `run.sh stop` (which deliberately leaves
+        it up), does not sit on the card under a remote configuration.
+        """
+        if is_local_tts(self.state.settings.tts_url) or not self.tts_pids():
+            return ""
+        before = vram_info()
+        ok, msg = self.stop_tts_server()
+        if not ok:
+            return ""
+        after = vram_info()
+        freed = ""
+        if before and after:
+            freed = f", freeing {max(0.0, before[0] - after[0]):.1f} GB"
+        self.log(f"[tts] stopped tts-server here{freed} - speech comes from "
+                 f"{self.state.settings.tts_url}")
+        return f"Stopped tts-server on this machine{freed}."
+
     def set_tts_server(self, where, url):
         """Point speech at this machine or at a remote tts-server.
 
@@ -349,21 +373,27 @@ class DeadInternetApp:
         # Whatever was registered was registered somewhere else.
         self.tts.point_at(url)
         self.log(f"[tts] speech engine: {url}")
+        # Going remote hands the card back: a tts-server here would only be
+        # holding VRAM that Ollama, or a game, now gets to have.
+        stopped = self.stop_local_tts_if_remote()
+        tail = f" {stopped}" if stopped else ""
 
         if self.tts_alive():
             # Local or remote, a server that is already up just needs the
             # roster; autostart would be a no-op and boot_tts skips it.
             self.start_tts_boot(autostart=False)
             n = len(self.state.restorable())
-            return True, (f"Speaking through `{url}`. Registering {n} voices - "
-                          "watch **Diagnostics**, then press **Refresh voices**.")
+            verb = "Registering" if is_local_tts(url) else "Checking"
+            return True, (f"Speaking through `{url}`. {verb} {n} voices - "
+                          "watch **Diagnostics**, then press **Refresh voices**."
+                          + tail)
         if is_local_tts(url):
             self.start_tts_boot(autostart=True)
             return True, (f"Speaking through `{url}`. Nothing is answering "
                           "there yet, so tts-server is starting on this machine.")
         return False, (f"Saved, but nothing answered at `{url}`. Check it is "
                        "running and reachable from here; speech will not work "
-                       "until it is.")
+                       "until it is." + tail)
 
     def restart_tts_server(self, device=None):
         """Stop, wait for the card, and bring it back. -> (ok, message).
@@ -413,6 +443,10 @@ class DeadInternetApp:
         the server takes to answer, so run it off the main thread.
         """
         with self._tts_lock:
+            # Under a remote setting, a server left running here -- by an
+            # earlier session, or by `run.sh stop`, which deliberately leaves
+            # it up -- is holding the card for nothing.
+            self.stop_local_tts_if_remote()
             if not self.tts_alive():
                 if not autostart:
                     n = len(self.state.restorable())

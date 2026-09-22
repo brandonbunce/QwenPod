@@ -37,6 +37,12 @@ def _app():
     app.started = []
     app.start_tts_boot = lambda autostart=True: app.started.append(autostart)
     app.tts_alive = lambda timeout=2.0: False
+    # A tts-server "is running" here, and stopping it is recorded rather than
+    # done: the real stop_tts_server kills whatever /proc says is tts-server.
+    app.stops = []
+    app.tts_pids = lambda: [] if app.stops else [4242]
+    app.stop_tts_server = lambda timeout=15.0: (
+        app.stops.append(1), (True, "Stopped tts-server (1 process(es))."))[1]
     # The app log is a real file in the repo; a test has no business in it.
     app.log = lambda msg: None
     return app
@@ -82,6 +88,34 @@ def test_switch_to_remote_and_back():
     assert app.started == [True]      # local and down: autostart it
     # The remote address is remembered for switching back.
     assert s.tts_remote_url == REMOTE
+
+
+def test_going_remote_stops_the_local_server():
+    """Speech pointed at another machine leaves nothing holding the card
+    here: the switch stops a running tts-server, says so, and switching back
+    does not stop anything (there is nothing running, and local autostarts)."""
+    app = _app()
+    ok, msg = app.set_tts_server(TTS_REMOTE, REMOTE)
+    assert app.stops == [1]
+    assert "Stopped tts-server on this machine" in msg
+    app.set_tts_server(TTS_HERE, "")
+    assert app.stops == [1]
+
+
+def test_boot_under_remote_stops_the_local_server():
+    """A server left running by an earlier session, or by run.sh stop, is
+    stopped at boot when the saved setting is remote -- and not when it is
+    local, where it is exactly the server the roster is registered on."""
+    app = _app()
+    app.state.settings.tts_url = REMOTE
+    app.tts.point_at(REMOTE)
+    app.boot_tts(autostart=True)
+    assert app.stops == [1]
+
+    app = _app()
+    app._start_tts_server = lambda: (False, "not in this test")
+    app.boot_tts(autostart=True)
+    assert app.stops == []
 
 
 def test_rejected_url_changes_nothing():

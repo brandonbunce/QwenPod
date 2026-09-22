@@ -180,6 +180,13 @@ Worth knowing:
   speech is remote those three controls and the whole **Testing** tab are off
   the page, with one line under *Speech engine* saying so; **Use this server**
   pointed back at this machine brings them back.
+- **Going remote stops tts-server here.** Switching with *Use this server*
+  stops a tts-server running on this machine and says how much VRAM that
+  freed, and the app does the same at boot when the saved setting is remote,
+  so a server left up by an earlier session or by `run.sh stop` (which
+  deliberately leaves it running) is not holding 6.5 GB of the card under a
+  configuration that never speaks through it. Switching back to this machine
+  starts it again.
 - The clips leave this machine in the clear over HTTP unless the remote is
   HTTPS, so this belongs on a network you trust.
 
