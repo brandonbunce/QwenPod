@@ -29,12 +29,12 @@ from ..comedy import DEFAULT_MOVES
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
 
 def build_diagnostics(app):
-    """Two columns: services and the event log on the left, the four subsystem
-    reports on the right.
+    """Two columns: services and the event log on the left, the subsystem
+    reports on the right, each in an accordion that starts open.
 
-    The reports use the same scrolling boxes as the transcript rather than bare
-    Markdown, so a long report scrolls in place instead of pushing everything
-    below it off the screen.
+    The reports use the same scrolling boxes as the transcript rather than
+    bare Markdown, so a long report scrolls in place instead of pushing
+    everything below it off the screen.
     """
     with gr.Row(equal_height=False):
         with gr.Column(scale=1):
@@ -42,8 +42,9 @@ def build_diagnostics(app):
             services = gr.Markdown(app.service_report(), container=True,
                                    elem_classes=["status-box"])
             with gr.Row():
-                gr.Markdown("**Event log** — what happened, newest last")
-                log_clear = gr.Button("Clear", scale=0, min_width=80)
+                gr.Markdown("**Event log**")
+                log_clear = gr.Button("Clear", scale=0, min_width=80, size="sm",
+                                      elem_classes=["roster-tool"])
             # Textbox, not Markdown: the log carries names and arbitrary
             # message text, and a stray asterisk should not turn the rest of
             # it italic. Monospace via CSS so the timestamps line up.
@@ -53,32 +54,35 @@ def build_diagnostics(app):
                 elem_classes=["log-box"])
 
         with gr.Column(scale=1):
-            gr.Markdown(
-                "**Voice connection** - Discord terminates the call when the channel "
-                "empties; the watchdog gets back in when someone returns."
-            )
-            voice = gr.Markdown("_(not connected)_", height=150, container=True,
-                                elem_classes=["status-box"])
-            gr.Markdown(
-                "**Chat input** - the only path a real person has into the "
-                "conversation. Messages count only from the server the bot is "
-                "currently in, and only act in interactive mode."
-            )
-            chat = gr.Markdown("_(not connected)_", height=150, container=True,
-                               elem_classes=["status-box"])
-            gr.Markdown("**Output loudness**")
-            norm = gr.Markdown("_(nothing played yet)_", height=110, container=True,
-                               elem_classes=["status-box"])
-            gr.Markdown("**Topic rotation**")
-            topic = gr.Markdown("_(rotation off)_", height=150, container=True,
-                                elem_classes=["status-box"])
-            gr.Markdown(
-                "**Comedy** — what the last line was told to do, and how the "
-                "last segment measured. The numbers are proxies: none of them "
-                "is *funny*, but each is something a dull transcript gets wrong."
-            )
-            comedy = gr.Markdown("_(nothing said yet)_", height=150, container=True,
-                                 elem_classes=["status-box"])
+            with gr.Accordion("Voice connection", open=True):
+                gr.Markdown(
+                    "Discord ends the call when the channel empties; the "
+                    "watchdog gets back in when someone returns.",
+                    elem_classes=["qp-note"])
+                voice = gr.Markdown("_(not connected)_", height=150, container=True,
+                                    elem_classes=["status-box"])
+            with gr.Accordion("Chat input", open=True):
+                gr.Markdown(
+                    "The only path a real person has into the conversation. "
+                    "Messages count only from the server the bot is in, and "
+                    "only act in interactive mode.",
+                    elem_classes=["qp-note"])
+                chat = gr.Markdown("_(not connected)_", height=150, container=True,
+                                   elem_classes=["status-box"])
+            with gr.Accordion("Output loudness", open=True):
+                norm = gr.Markdown("_(nothing played yet)_", height=110, container=True,
+                                   elem_classes=["status-box"])
+            with gr.Accordion("Topic rotation", open=True):
+                topic = gr.Markdown("_(rotation off)_", height=150, container=True,
+                                    elem_classes=["status-box"])
+            with gr.Accordion("Comedy", open=True):
+                gr.Markdown(
+                    "What the last line was told to do, and how the last "
+                    "segment measured. The numbers are proxies: none of them "
+                    "is funny, but each is something a dull transcript gets "
+                    "wrong.", elem_classes=["qp-note"])
+                comedy = gr.Markdown("_(nothing said yet)_", height=150, container=True,
+                                     elem_classes=["status-box"])
 
     return DiagnosticsPanel(voice=voice, chat=chat, norm=norm, topic=topic,
                             comedy=comedy,
@@ -606,128 +610,139 @@ def build_topic(app):
     state = app.state
     with gr.Row(equal_height=False):
         with gr.Column(scale=1):
-            gr.Markdown(
-                "What they talk about. The **Topic** box is live - rotation "
-                "overwrites it, so it always shows what is actually being "
-                "discussed. Press Enter or click away to save an edit."
-            )
-            m_topic = gr.Textbox(value=state.settings.topic, label="Topic", lines=2)
+            m_topic = gr.Textbox(
+                value=state.settings.topic, label="Topic", lines=2,
+                info=help("What they talk about. Enter or click away saves "
+                          "an edit.",
+                          "This box is live: rotation overwrites it, so it "
+                          "always shows what is actually being discussed."))
             with gr.Row():
                 m_topic_now = gr.Button("Switch to this now", variant="primary")
                 m_topic_queue = gr.Button("Queue as next topic")
             m_topic_from = gr.Textbox(
                 value=state.settings.topic_author, label="Pinned by",
                 interactive=False, max_lines=1,
-                info="Who posted the pin this topic came from, and where. Blank once "
-                     "you edit the topic by hand - there is no sender to credit then.")
+                info=help("Who posted the pin this topic came from, and where.",
+                          "Blank once you edit the topic by hand; there is "
+                          "no sender to credit then."))
 
             gr.Markdown("**Up next**")
             topic_queue_md = gr.Markdown(
                 "_(no queue yet)_", height=200, container=True,
                 elem_classes=["queue-box"])
 
-            gr.Markdown("**Rotation**")
-            with gr.Row():
-                m_rotate = gr.Checkbox(value=state.settings.topic_rotation,
-                                       label="Rotate topic automatically")
-                m_rot_mins = gr.Slider(1, 60, value=state.settings.topic_interval_minutes,
-                                       step=1, label="Every N minutes")
-            m_rot_clear = gr.Checkbox(value=state.settings.topic_clears_context,
-                                      label="Clear context on switch")
-            m_rot_say = gr.Checkbox(value=state.settings.topic_announce,
-                                    label="Announce the switch out loud")
-            m_rot_instant = gr.Checkbox(
-                value=state.settings.topic_switch_instant,
-                label="Switch instantly",
-                info="Cut the current speaker off mid-sentence instead of "
-                     "waiting for the utterance to finish.")
+            with gr.Accordion("Rotation", open=False):
+                with gr.Row():
+                    m_rotate = gr.Checkbox(value=state.settings.topic_rotation,
+                                           label="Rotate topic automatically")
+                    m_rot_mins = gr.Slider(1, 60, value=state.settings.topic_interval_minutes,
+                                           step=1, label="Every N minutes")
+                with gr.Row():
+                    m_rot_clear = gr.Checkbox(value=state.settings.topic_clears_context,
+                                              label="Clear context on switch")
+                    m_rot_say = gr.Checkbox(value=state.settings.topic_announce,
+                                            label="Announce the switch out loud")
+                    m_rot_instant = gr.Checkbox(
+                        value=state.settings.topic_switch_instant,
+                        label="Switch instantly",
+                        info=help("Cut the current speaker off mid-sentence.",
+                                  "Off waits for the utterance to finish."))
 
         with gr.Column(scale=1):
+            gr.Markdown("**Sources**")
             gr.Markdown(
-                "### Sources\n"
-                "Each switch picks a source at random, weighted by the sliders below. "
-                "A source with weight 0, or with nothing in it, is never drawn - so "
-                "50/0/0 and 5/0/0 behave identically."
-            )
+                "Each switch picks a source at random, weighted by the "
+                "sliders. A source with weight 0, or with nothing in it, is "
+                "never drawn.", elem_classes=["qp-note"])
             with gr.Tabs():
                 with gr.Tab("Discord (pins)"):
                     w_pins = gr.Slider(
                         0, 100, value=state.settings.source_pins_weight, step=5,
-                        label="Weight", info="How often the topic comes from a pinned message.")
+                        label="Weight",
+                        info=help("How often the topic comes from a pinned "
+                                  "message.",
+                                  "Weights are relative: 50/0/0 and 5/0/0 "
+                                  "behave identically."))
                     m_rot_chans = gr.CheckboxGroup(
                         choices=[], value=[], label="Pin channels",
-                        info="Every ticked channel feeds one shared pool. Pins are drawn "
-                             "from a shuffled bag, so all get used before any repeats. "
-                             "Connect the bot to populate this list.")
+                        info=help("Every ticked channel feeds one shared pool. "
+                                  "Connect the bot to fill this list.",
+                                  "Pins are drawn from a shuffled bag, so all "
+                                  "get used before any repeats."))
                     m_images = gr.Checkbox(
                         value=state.settings.topic_images,
                         label="Send pinned images to the model",
-                        info="When a pin is an image, the announcer describes it out loud "
-                             "and that description becomes everyone else's context - one "
-                             "vision call per topic, not one per turn. Needs a multimodal "
-                             "model.")
+                        info=help("The announcer describes an image pin out "
+                                  "loud. Needs a multimodal model.",
+                                  "That description becomes everyone else's "
+                                  "context: one vision call per topic, not "
+                                  "one per turn."))
                     with gr.Row():
                         m_seed = gr.Number(
                             value=state.settings.rng_seed, precision=0, label="RNG seed",
-                            info="Drives pin order, speaker choice and stim rolls. 0 = "
-                                 "fresh seed each start. Applies on reconnect.")
+                            info=help("0 = fresh seed each start. Applies on "
+                                      "reconnect.",
+                                      "Drives pin order, speaker choice and "
+                                      "stim rolls."))
                         m_reseed = gr.Button("Reshuffle now")
                         m_rot_next = gr.Button("Skip to next pin")
 
                 with gr.Tab("Web search"):
                     w_web = gr.Slider(
                         0, 100, value=state.settings.source_web_weight, step=5,
-                        label="Weight", info="How often the topic comes from a web search.")
+                        label="Weight",
+                        info=help("How often the topic comes from a web search."))
                     web_subjects = gr.Textbox(
                         value=state.settings.web_subjects, lines=6,
                         label="Subjects to search",
                         placeholder="deep sea creatures\nweird food history\nunsolved mysteries",
-                        info="One per line. The director works through them in order, and "
-                             "through the results of each in random order, so a subject is "
-                             "not used up before the next one gets a turn.")
-                    web_n = gr.Slider(
-                        3, 20, value=state.settings.web_results_per_search, step=1,
-                        label="Results per search",
-                        info="Fetched once per subject and cached, then handed out one at "
-                             "a time.")
-                    web_read = gr.Checkbox(
-                        value=state.settings.web_read_articles,
-                        label="Read the article",
-                        info="Opens the result and has the model brief what it actually "
-                             "says - that brief is the topic. Off uses the search "
-                             "result's title and snippet, which is a headline with "
-                             "nothing in it to discuss. Happens while the previous "
-                             "topic is still running, so it costs no air time.")
-                    gr.Markdown(
-                        "_Looks for news stories first (Bing News feed), then falls back "
-                        "to DuckDuckGo; no API key for either, and sponsored results are "
-                        "dropped. Pages with no real prose - shops, video players, "
-                        "paywalls - are skipped. Everything it does is in the app log "
-                        "under `[web]`._")
+                        info=help("One per line, worked through in order.",
+                                  "The results of each are used in random "
+                                  "order, so a subject is not used up before "
+                                  "the next one gets a turn. News stories "
+                                  "first (Bing News), then DuckDuckGo; no API "
+                                  "key for either, sponsored results dropped, "
+                                  "pages with no real prose skipped. "
+                                  "Everything it does is in the app log under "
+                                  "`[web]`."))
+                    with gr.Row():
+                        web_n = gr.Slider(
+                            3, 20, value=state.settings.web_results_per_search, step=1,
+                            label="Results per search",
+                            info=help("Fetched once per subject and cached, "
+                                      "then handed out one at a time."))
+                        web_read = gr.Checkbox(
+                            value=state.settings.web_read_articles,
+                            label="Read the article",
+                            info=help("The model briefs what the page actually "
+                                      "says; that brief is the topic.",
+                                      "Off uses the search result's title and "
+                                      "snippet, which is a headline with "
+                                      "nothing in it to discuss. Happens while "
+                                      "the previous topic is still running, so "
+                                      "it costs no air time."))
 
                 with gr.Tab("Discord (crowd-sourced)"):
                     w_crowd = gr.Slider(
                         0, 100, value=state.settings.source_crowd_weight, step=5,
-                        label="Weight", info="How often the topic comes from a submission.")
-                    gr.Markdown(
-                        "Anyone in the server runs **`/topics`** in any channel and it "
-                        "lands in the queue. Discord confirms it privately, so the channel "
-                        "does not fill with acknowledgements. Submissions are used "
-                        "oldest-first and are announced with credit to whoever sent them.\n\n"
-                        "A real slash command, registered when the bot connects - it "
-                        "appears in Discord's own picker with the description and the "
-                        "argument prompt. There is also **`/sayas`**, which puts a line "
-                        "straight into a chosen host's mouth."
-                    )
+                        label="Weight",
+                        info=help("How often the topic comes from a submission.",
+                                  "Anyone in the server runs `/topics` in any "
+                                  "channel and it lands here; Discord "
+                                  "confirms privately. Submissions are used "
+                                  "oldest first and announced with credit. "
+                                  "`/sayas` puts a line straight into a "
+                                  "chosen host's mouth."))
                     crowd_pending = gr.Markdown(
                         "_(none submitted yet)_", height=200, container=True,
                         elem_classes=["queue-box"])
                     with gr.Row():
-                        crowd_clear = gr.Button("Clear submissions")
                         crowd_max = gr.Slider(
                             10, 500, value=state.settings.crowd_max, step=10,
                             label="Keep at most",
-                            info="Oldest are dropped past this.")
+                            info=help("Oldest are dropped past this."))
+                        crowd_clear = gr.Button("Clear submissions", variant="stop",
+                                                scale=0, min_width=150)
     return TopicPanel(
         m_topic_from=m_topic_from,
         topic_queue_md=topic_queue_md,
