@@ -96,6 +96,22 @@ def restart_tts(app, device):
     return note(msg) if ok else warn(msg)
 
 
+def set_tts_server(app, where, url):
+    """Point speech at this machine or at a remote tts-server.
+
+    Leaves the box holding the remote address even after switching back to
+    this machine: it is the remembered one, and blanking it would mean typing
+    the address again to switch back.
+    """
+    try:
+        ok, msg = app.set_tts_server(where, url)
+    except Exception as e:
+        return gr.update(), warn(f"Could not switch speech engine - {e}")
+    app.events.add(VOICE, f"speech engine: {where} - {msg}")
+    box = gr.update(value=app.state.settings.tts_remote_url)
+    return box, (note(msg) if ok else warn(msg))
+
+
 def stop_tts(app):
     """Shut tts-server down and hand the card back.
 

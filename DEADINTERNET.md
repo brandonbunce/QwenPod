@@ -153,6 +153,29 @@ still believes every voice is live. Two ways back:
 Both wait up to 120s and log to `logs/tts-server.log`. Restarting the app does both
 at once, which is why `pkill`-both-then-start-the-app now works as a recipe.
 
+### Speaking through a tts-server on another machine
+
+**Outputs → Speech engine → Where speech is generated** takes *this machine* or
+*remote server*; the box next to it is the remote address (`http://host:port`,
+address only, no path), and **Use this server** switches to it. `--tts` does the
+same thing at startup and is equally remote-capable. The URL is the whole
+setting — there is no separate "remote" flag — so anything that reads as local
+is local, and `localhost.example.com` is not.
+
+Worth knowing:
+
+- **The roster is re-registered against whichever server is selected.** Voices
+  live in the server's memory, so switching re-uploads every reference clip.
+  That runs in the background; watch **Diagnostics**, then **Refresh voices**.
+- **Nothing is started for you on the far end.** If it is not answering, the
+  switch still happens and says so, because the alternative is quietly
+  continuing to speak through the old server.
+- **Backend (GPU/CPU), Restart and Stop only ever act on tts-server here**, and
+  refuse while speech is pointed elsewhere rather than restarting a server that
+  nothing is speaking through. Autostart is skipped for the same reason.
+- The clips leave this machine in the clear over HTTP unless the remote is
+  HTTPS, so this belongs on a network you trust.
+
 ---
 
 ## VRAM: the thing that will bite you

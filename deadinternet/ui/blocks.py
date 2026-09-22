@@ -192,6 +192,9 @@ def build(app):
                 u.t_restart = outputs.t_restart
                 u.t_stop = outputs.t_stop
                 u.t_device = outputs.t_device
+                u.t_where = outputs.t_where
+                u.t_url = outputs.t_url
+                u.t_use = outputs.t_use
             with gr.Tab("Behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
@@ -316,6 +319,8 @@ def build(app):
         u.t_restart.click(bound(t_local.restart_tts, app), u.t_device,
                           u.sb_action)
         u.t_stop.click(bound(t_local.stop_tts, app), None, u.sb_action)
+        u.t_use.click(bound(t_local.set_tts_server, app), [u.t_where, u.t_url],
+                      [u.t_url, u.sb_action])
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,

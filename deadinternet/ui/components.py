@@ -55,6 +55,9 @@ class OutputsPanel:
     t_restart: Any
     t_stop: Any
     t_device: Any
+    t_where: Any
+    t_url: Any
+    t_use: Any
 
 
 @dataclass(frozen=True)

@@ -102,6 +102,16 @@ class TTSClient:
                 problems.append(f"{sp.name}: {msg}")
         return problems
 
+    def point_at(self, base_url: str):
+        """Speak through a different tts-server from now on.
+
+        The cache is per-server: a name registered on the old one says nothing
+        about the new one, so it is dropped rather than carried across.
+        """
+        with self._lock:
+            self.base_url = base_url.rstrip("/")
+            self._registered.clear()
+
     def forget(self, name: str):
         with self._lock:
             self._registered.discard(name)

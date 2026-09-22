@@ -20,13 +20,27 @@ from .tabs.behaviour import music_report as t_behaviour_music
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices
 from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
-                      RECOMMENDED, TTS_DEVICES)
+                      RECOMMENDED, TTS_DEVICES, TTS_HERE, TTS_REMOTE,
+                      TTS_WHERE, is_local_tts)
 from ..comedy import DEFAULT_MOVES
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
 
 # Why a restart button exists at all. The state it recovers from is invisible
 # and permanent, so "it sounds sluggish" is the only symptom and a terminal was
 # the only cure.
+# The three controls below the radio drive the tts-server on this machine, and
+# say nothing about one somewhere else -- which is not obvious from looking at
+# them, so it is written down next to them.
+REMOTE_HINT = (
+    "**Remote** speaks through a tts-server on another machine, which is worth "
+    "having when this card is busy or the model will not fit on it. The roster "
+    "is registered against whichever server is selected - voices live in the "
+    "server's memory, so pointing at a new one re-uploads every reference clip "
+    "and that takes a minute or two.\n\n"
+    "**Backend**, **Restart** and **Stop** below only ever act on tts-server "
+    "*on this machine*, whichever server speech is coming from."
+)
+
 TTS_HINT = (
     "**Restart it after freeing VRAM.** tts-server allocates once, at startup. "
     "If the card was full then - a big model in Ollama, or a game - the driver "
@@ -184,13 +198,26 @@ def build_outputs(app):
                  "anything still over is cut with a short fade.")
 
     gr.Markdown("### Speech engine")
+    s = app.state.settings
+    remote = not is_local_tts(s.tts_url)
+    with gr.Row():
+        t_where = gr.Radio(
+            choices=TTS_WHERE, value=TTS_REMOTE if remote else TTS_HERE,
+            label="Where speech is generated", scale=2)
+        t_url = gr.Textbox(
+            value=s.tts_url if remote else s.tts_remote_url,
+            label="Remote tts-server", scale=2,
+            placeholder="http://voice.example.internal:8080",
+            info="Address only, no path. Used when Where is set to "
+                 f"'{TTS_REMOTE}'.")
+        t_use = gr.Button("Use this server", scale=1)
     with gr.Row():
         t_device = gr.Radio(
-            choices=TTS_DEVICES, value=app.state.settings.tts_device,
+            choices=TTS_DEVICES, value=s.tts_device,
             label="Backend", scale=2)
         t_restart = gr.Button("Restart tts-server", scale=1)
         t_stop = gr.Button("Stop tts-server", scale=1)
-    gr.Markdown("Shared by both outputs.\n\n" + TTS_HINT)
+    gr.Markdown("Shared by both outputs.\n\n" + REMOTE_HINT + "\n\n" + TTS_HINT)
     return OutputsPanel(
         d_connect=d_connect,
         d_channel=d_channel,
@@ -214,6 +241,9 @@ def build_outputs(app):
         t_restart=t_restart,
         t_stop=t_stop,
         t_device=t_device,
+        t_where=t_where,
+        t_url=t_url,
+        t_use=t_use,
     )
 
 

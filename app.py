@@ -21,11 +21,13 @@ import urllib.request
 from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
                                  OUTPUT_DISCORD, OUTPUT_LOCAL,
                                  TTS_CPU, TTS_DEVICES, TTS_GPU, TTS_LOG_PATH,
+                                 TTS_REMOTE, LOCAL_TTS_URL,
                                  PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
                                  VRAM_WARN_FRACTION, WHISPER_LOG_PATH, State,
-                                 gpu_busy_percent, load_env, logs_dir,
-                                 plain_md, vram_info)
+                                 gpu_busy_percent, is_local_tts, load_env,
+                                 logs_dir, normalize_tts_url, plain_md,
+                                 vram_info)
 from deadinternet import comedy
 from deadinternet.events import EventLog
 from deadinternet.director import Director
@@ -41,12 +43,6 @@ from deadinternet.ui import APP_CSS, build
 
 # How long to wait for a freshly launched tts-server to answer.
 TTS_BOOT_TIMEOUT = 120
-
-
-def _is_local(url: str) -> bool:
-    """Is this tts-server on this machine? Used only to decide whether the URL
-    is worth showing -- localhost is the default and says nothing."""
-    return bool(re.search(r"//(127\.0\.0\.1|localhost|\[::1\])\b", url or ""))
 
 
 class DeadInternetApp:
@@ -153,6 +149,11 @@ class DeadInternetApp:
             return True, "tts-server already running."
 
         s = self.state.settings
+        # Speech is pointed at another machine: there is nothing here to
+        # launch, and launching one would not be what is being spoken through.
+        if not is_local_tts(s.tts_url):
+            return False, (f"speech engine is set to {s.tts_url} - start "
+                           "tts-server there, or switch back to this machine.")
         binary = os.path.join(ROOT, s.tts_binary)
         model = os.path.join(ROOT, s.tts_model)
         codec = os.path.join(ROOT, s.tts_codec)
@@ -319,6 +320,45 @@ class DeadInternetApp:
         time.sleep(1.5)
         return True, f"Stopped tts-server ({len(pids)} process(es))."
 
+    def set_tts_server(self, where, url):
+        """Point speech at this machine or at a remote tts-server.
+
+        Returns (ok, message). The URL is the whole setting -- nothing stores
+        "am I remote" separately -- so this is just: validate, save, re-point
+        the client, and start registering the roster against whatever is
+        there now. Registration runs in the background because a full roster
+        is a minute or two of speaker-encoder work on the far end.
+        """
+        s = self.state.settings
+        if where == TTS_REMOTE:
+            try:
+                url = normalize_tts_url(url)
+            except ValueError as e:
+                return False, str(e)
+            s.tts_remote_url = url
+        else:
+            url = LOCAL_TTS_URL
+        s.tts_url = url
+        self.state.save()
+        # Whatever was registered was registered somewhere else.
+        self.tts.point_at(url)
+        self.log(f"[tts] speech engine: {url}")
+
+        if self.tts_alive():
+            # Local or remote, a server that is already up just needs the
+            # roster; autostart would be a no-op and boot_tts skips it.
+            self.start_tts_boot(autostart=False)
+            n = len(self.state.restorable())
+            return True, (f"Speaking through `{url}`. Registering {n} voices - "
+                          "watch **Diagnostics**, then press **Refresh voices**.")
+        if is_local_tts(url):
+            self.start_tts_boot(autostart=True)
+            return True, (f"Speaking through `{url}`. Nothing is answering "
+                          "there yet, so tts-server is starting on this machine.")
+        return False, (f"Saved, but nothing answered at `{url}`. Check it is "
+                       "running and reachable from here; speech will not work "
+                       "until it is.")
+
     def restart_tts_server(self, device=None):
         """Stop, wait for the card, and bring it back. -> (ok, message).
 
@@ -329,6 +369,9 @@ class DeadInternetApp:
         this that meant a terminal and remembering the order.
         """
         s = self.state.settings
+        if not is_local_tts(s.tts_url):
+            return False, (f"speech engine is set to {s.tts_url} - the backend "
+                           "and this button are for tts-server on this machine.")
         if device in TTS_DEVICES and device != s.tts_device:
             s.tts_device = device
             self.state.save()
@@ -456,7 +499,7 @@ class DeadInternetApp:
         url = self.state.settings.tts_url
         # Only worth naming when speech is coming from somewhere other than
         # this machine, which is the case that would surprise you.
-        where = "" if _is_local(url) else f" at `{url}`"
+        where = "" if is_local_tts(url) else f" at `{url}`"
         try:
             model = re.sub(r"\.gguf$", "", self.tts.model_id())
             return f"**tts-server** ready{where} — `{model}`"

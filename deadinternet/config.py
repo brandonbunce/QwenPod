@@ -9,6 +9,7 @@ import glob
 import json
 import os
 import re
+import urllib.parse
 import subprocess
 import threading
 from collections import deque
@@ -155,6 +156,59 @@ MODE_MANUAL = "manual"
 TTS_GPU = "gpu"
 TTS_CPU = "cpu"
 TTS_DEVICES = [TTS_GPU, TTS_CPU]
+
+# Speech can come from this machine or from a tts-server somewhere else on the
+# network. There is no flag for which: the URL is the setting, and everything
+# that only makes sense locally -- autostart, the backend radio, Restart --
+# asks is_local_tts() rather than carrying its own copy of the answer.
+LOCAL_TTS_URL = "http://127.0.0.1:8080"
+TTS_HERE = "this machine"
+TTS_REMOTE = "remote server"
+TTS_WHERE = [TTS_HERE, TTS_REMOTE]
+
+
+# Hostnames that mean this machine. Compared against the parsed hostname, not
+# matched in the URL text: "//localhost\b" also matches localhost.evil.example,
+# which is somebody else's box, and this answer decides whether the app starts
+# a server here and whether Restart is allowed to act.
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def is_local_tts(url: str) -> bool:
+    """Is this tts-server on this machine?"""
+    url = (url or "").strip()
+    if url and "://" not in url:
+        url = "http://" + url
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+    except ValueError:
+        return False
+    return (host or "").lower() in LOCAL_HOSTS
+
+
+def normalize_tts_url(url: str) -> str:
+    """Tidy a typed-in server URL, or raise ValueError saying what is wrong.
+
+    Bare hostnames get http:// because that is what anyone types for a box on
+    their own network, and the trailing slash goes because TTSClient joins
+    paths onto this string.
+    """
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        raise ValueError("give the server's address, e.g. "
+                         "http://voice.example.internal:8080")
+    if "://" not in url:
+        url = "http://" + url
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"{parts.scheme}:// is not a tts-server address - "
+                         "use http:// or https://")
+    if not parts.hostname:
+        raise ValueError(f"no hostname in '{url}'")
+    if parts.path or parts.query or parts.fragment:
+        raise ValueError("give the server's address only, with no path after "
+                         f"it - '{parts.scheme}://{parts.netloc}'")
+    return f"{parts.scheme}://{parts.netloc}"
 
 OUTPUT_DISCORD = "discord"
 OUTPUT_LOCAL = "local"
@@ -378,7 +432,14 @@ class Settings:
     ollama_model: str = "gemma4:e4b"
     openai_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5.6-luna"
-    tts_url: str = "http://127.0.0.1:8080"
+    # The tts-server everything speaks through. Local by default; point it
+    # elsewhere from Outputs > Speech engine, or with --tts.
+    tts_url: str = LOCAL_TTS_URL
+    # Remembered so switching back to a remote server does not mean typing the
+    # address again. Only ever a prefill -- tts_url is what is in use. Empty by
+    # default and deliberately so: a real address belongs in deadinternet.json,
+    # which is gitignored, not in a tracked file that gets pushed.
+    tts_remote_url: str = ""
     # Used to relaunch tts-server from the UI when it is down. Paths are
     # relative to the repo root.
     # Discord, or this machine's own sound card. Local needs no token, no
