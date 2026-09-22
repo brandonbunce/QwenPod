@@ -748,290 +748,340 @@ def build_topic(app):
 
 
 def build_behaviour(app):
+    """Six sections, one open. Language model is what you come here to
+    change; the rest are closed accordions in the order a show uses them."""
     state = app.state
-    gr.Markdown("### Language model")
-    with gr.Row():
-        m_provider = gr.Radio(choices=PROVIDERS, value=state.settings.provider,
-                              label="LLM provider")
-        m_refresh_models = gr.Button("Refresh model list")
-    gr.Markdown(
-        "`ollama` runs locally but shares the GPU with the TTS server - keep the "
-        "model small. `openai` is remote: it costs money and adds latency, but "
-        "leaves the whole card free for speech.\n\n"
-        "Secrets come from `.env` at the repo root (copy `.env.example`); they are "
-        f"never entered or stored in this UI. Current state - `{app.env_summary()}`"
-    )
-    with gr.Row():
-        m_model = gr.Dropdown(
-            choices=app.ollama.models() or [state.settings.ollama_model],
-            value=state.settings.ollama_model, label="Ollama model")
-        m_oa_model = gr.Dropdown(
-            choices=[state.settings.openai_model], value=state.settings.openai_model,
-            label="OpenAI model", allow_custom_value=True)
-    m_think = gr.Checkbox(
-        value=state.settings.thinking, label="Let the model think first",
-        info="Ollama only - it sets `think` on the request, and a model with no "
-             "reasoning mode ignores it. Every line gets 8x the token budget, "
-             "because the reasoning has to fit inside the same budget as the "
-             "answer. Expect seconds of extra latency per line, which in a live "
-             "call is dead air. The interrupt router never thinks either way.")
-    m_pipe = gr.Checkbox(
-        value=state.settings.pipeline_view,
-        label="Show the stage strip",
-        info="A live row above the transcript saying what each part is doing "
-             "and for how long - which is the difference between the model "
-             "being slow, tts-server being queued, and the gap simply being "
-             "set long. Timings are collected either way; this only draws them.")
-    m_raw = gr.Checkbox(
-        value=state.settings.raw_feed, label="Show raw model output",
-        info="Streams every generation into a box on the Run tab as it "
-             "arrives - reasoning, false starts, the router's JSON, and the "
-             "empty completions behind a turn that never happened. Off puts "
-             "both providers back on a single buffered request.")
+    with gr.Accordion("Language model", open=True):
+        with gr.Row():
+            m_provider = gr.Radio(
+                choices=PROVIDERS, value=state.settings.provider,
+                label="LLM provider",
+                info=help("ollama runs here and shares the GPU with speech; "
+                          "openai is remote and costs money.",
+                          "Keep an Ollama model small: it competes with "
+                          "tts-server for the card. OpenAI adds latency but "
+                          "leaves the whole card free for speech."))
+            m_refresh_models = gr.Button("Refresh model list")
+        with gr.Row():
+            m_model = gr.Dropdown(
+                choices=app.ollama.models() or [state.settings.ollama_model],
+                value=state.settings.ollama_model, label="Ollama model")
+            m_oa_model = gr.Dropdown(
+                choices=[state.settings.openai_model],
+                value=state.settings.openai_model,
+                label="OpenAI model", allow_custom_value=True)
+        gr.Markdown(
+            "Secrets come from `.env` at the repo root; they are never "
+            f"entered or stored here. `{app.env_summary()}`",
+            elem_classes=["qp-note"])
+        with gr.Row():
+            m_think = gr.Checkbox(
+                value=state.settings.thinking,
+                label="Let the model think first",
+                info=help("Ollama only. Seconds of extra latency per line.",
+                          "Sets `think` on the request; a model with no "
+                          "reasoning mode ignores it. Every line gets 8x the "
+                          "token budget, because the reasoning has to fit "
+                          "inside the same budget as the answer. In a live "
+                          "call that latency is dead air. The interrupt "
+                          "router never thinks either way."))
+            m_pipe = gr.Checkbox(
+                value=state.settings.pipeline_view,
+                label="Show the stage strip",
+                info=help("The live row above the transcript on Run.",
+                          "Says what each part is doing and for how long, "
+                          "which is the difference between the model being "
+                          "slow, tts-server being queued, and the gap simply "
+                          "being set long. Timings are collected either way; "
+                          "this only draws them."))
+            m_raw = gr.Checkbox(
+                value=state.settings.raw_feed,
+                label="Show raw model output",
+                info=help("Streams every generation into the box on Run.",
+                          "Reasoning, false starts, the router's JSON, and "
+                          "the empty completions behind a turn that never "
+                          "happened. Off puts both providers back on a "
+                          "single buffered request."))
 
-    gr.Markdown("### Conversation tuning")
-    with gr.Row():
-        m_gap = gr.Slider(0, 3, value=state.settings.gap_seconds, step=0.1,
-                          label="Gap between turns (s)", info=HELP["gap_seconds"])
-        m_temp = gr.Slider(0.1, 1.8, value=state.settings.temperature, step=0.05,
-                           label="LLM temperature", info=HELP["temperature"])
-    with gr.Row():
-        m_pred = gr.Slider(20, 300, value=state.settings.num_predict, step=10,
-                           label="Max tokens per line", info=HELP["num_predict"])
-        m_hist = gr.Slider(4, 40, value=state.settings.max_history, step=1,
-                           label="Context turns", info=HELP["max_history"])
-    m_reset = gr.Button(
-        "Reset the four above to recommended "
-        f"(gap {RECOMMENDED['gap_seconds']}s, temp {RECOMMENDED['temperature']}, "
-        f"{RECOMMENDED['num_predict']} tokens, {RECOMMENDED['max_history']} turns)")
+    with gr.Accordion("Conversation tuning", open=False):
+        with gr.Row():
+            m_gap = gr.Slider(0, 3, value=state.settings.gap_seconds, step=0.1,
+                              label="Gap between turns (s)",
+                              info=help(*HELP["gap_seconds"]))
+            m_temp = gr.Slider(0.1, 1.8, value=state.settings.temperature, step=0.05,
+                               label="LLM temperature",
+                               info=help(*HELP["temperature"]))
+        with gr.Row():
+            m_pred = gr.Slider(20, 300, value=state.settings.num_predict, step=10,
+                               label="Max tokens per line",
+                               info=help(*HELP["num_predict"]))
+            m_hist = gr.Slider(4, 40, value=state.settings.max_history, step=1,
+                               label="Context turns",
+                               info=help(*HELP["max_history"]))
+        m_reset = gr.Button(
+            "Reset the four above to recommended "
+            f"(gap {RECOMMENDED['gap_seconds']}s, temp {RECOMMENDED['temperature']}, "
+            f"{RECOMMENDED['num_predict']} tokens, {RECOMMENDED['max_history']} turns)",
+            size="sm")
 
-    gr.Markdown(
-        "### Comedy\n"
-        "A small model told to be funny holds a panel discussion. These make "
-        "the decisions in code and leave the model to carry them out - see "
-        "*Making it funny* in DEADINTERNET.md. Numbers for each segment are "
-        "on the Diagnostics tab."
-    )
-    with gr.Row():
-        m_moves = gr.Checkbox(
-            value=state.settings.moves_enabled,
-            label="Deal a comedic move each turn",
-            info="One concrete instruction per line - take it literally, "
-                 "escalate it, six words or fewer - drawn from a shuffled deck "
-                 "so none repeats until all have been used. Free: it is one "
-                 "sentence in the prompt.")
-        m_move_pct = gr.Slider(
-            0, 100, value=state.settings.move_chance, step=5,
-            label="Turns that get a move (%)",
-            info="Not 100 - a cast that is always doing a bit has nobody "
-                 "left to react to it.")
-    m_moves_text = gr.Textbox(
-        value=state.settings.moves_text, lines=8, label="The deck",
-        placeholder=DEFAULT_MOVES,
-        info="One move per line; empty uses the default deck shown greyed "
-             "out. Write things to DO, never things to BE. Start a line with "
-             "`short:` to hold the reply to a few words, `duo:` to skip it "
-             "when only one speaker is on. A line containing {bit} is a "
-             "callback, dealt only once something has been remembered.")
-    with gr.Row():
-        m_premises = gr.Checkbox(
-            value=state.settings.premises_enabled,
-            label="Write premises for each topic",
-            info="Once per topic, every character is given something petty to "
-                 "want out of it, chosen to collide with what the others "
-                 "want. One call, made while the previous topic is still "
-                 "playing. It is logged when it lands.")
-        m_bits = gr.Checkbox(
-            value=state.settings.bits_enabled,
-            label="Remember things to call back to",
-            info="Every few lines the oddest specifics are noted down, so a "
-                 "callback move can reach something that scrolled out of the "
-                 "context long ago. Survives topic switches. One small call, "
-                 "queued behind the next line.")
-        m_script = gr.Checkbox(
-            value=state.settings.script_framing,
-            label="Show the model a script, not a chat",
-            info="Chat turns are what an assistant is trained to be helpful "
-                 "inside. The same conversation laid out as dialogue to "
-                 "continue reads as fiction. Try it per model - some follow a "
-                 "script better than others.")
-    with gr.Row():
-        m_takes = gr.Slider(
-            1, 5, value=state.settings.line_takes, step=1,
-            label="Takes per line",
-            info="A take that opens by agreeing, explains itself, echoes a "
-                 "recent line or asks yet another question is written again, "
-                 "up to this many times; the least bad one plays. A clean "
-                 "first take costs nothing extra. 1 turns the filter off.")
-        m_judge = gr.Checkbox(
-            value=state.settings.line_judge,
-            label="Have the model pick the take",
-            info="Always writes every take, then asks which is most "
-                 "surprising and specific. Better lines for several times the "
-                 "LLM work per line - watch the stage strip before leaving "
-                 "this on.")
-    with gr.Row():
-        m_min_p = gr.Slider(
-            0.0, 0.3, value=state.settings.min_p, step=0.01,
-            label="min-p (Ollama)",
-            info="Drops any token less likely than this fraction of the most "
-                 "likely one. This is what lets temperature go past 1.0 "
-                 "without lines falling apart: try 0.05-0.1 with temperature "
-                 "1.1-1.3. 0 leaves Ollama's own top-p and top-k in charge.")
-        m_rep_pen = gr.Slider(
-            1.0, 1.5, value=state.settings.repeat_penalty, step=0.01,
-            label="Repeat penalty (Ollama)",
-            info="Makes words already in the context less likely. 1.0 is "
-                 "off; much past 1.2 starts avoiding words it needs.")
+    with gr.Accordion("Comedy", open=False):
+        with gr.Row():
+            m_moves = gr.Checkbox(
+                value=state.settings.moves_enabled,
+                label="Deal a comedic move each turn",
+                info=help("One concrete instruction per line, from a "
+                          "shuffled deck.",
+                          "A small model told to be funny holds a panel "
+                          "discussion. These settings make the decisions in "
+                          "code and leave the model to carry them out; see "
+                          "*Making it funny* in DEADINTERNET.md. A move is "
+                          "one sentence in the prompt, so it is free, and "
+                          "none repeats until all have been used. Numbers "
+                          "for each segment are on Diagnostics."))
+            m_move_pct = gr.Slider(
+                0, 100, value=state.settings.move_chance, step=5,
+                label="Turns that get a move (%)",
+                info=help("Not 100.",
+                          "A cast that is always doing a bit has nobody left "
+                          "to react to it."))
+        m_moves_text = gr.Textbox(
+            value=state.settings.moves_text, lines=6, label="The deck",
+            placeholder=DEFAULT_MOVES,
+            info=help("One move per line. Empty uses the default deck shown "
+                      "greyed out.",
+                      "Write things to DO, never things to BE. Start a line "
+                      "with `short:` to hold the reply to a few words, "
+                      "`duo:` to skip it when only one speaker is on. A line "
+                      "containing {bit} is a callback, dealt only once "
+                      "something has been remembered."))
+        with gr.Row():
+            m_premises = gr.Checkbox(
+                value=state.settings.premises_enabled,
+                label="Write premises for each topic",
+                info=help("Each character gets something petty to want out "
+                          "of the topic.",
+                          "Chosen to collide with what the others want. One "
+                          "call per topic, made while the previous topic is "
+                          "still playing; logged when it lands."))
+            m_bits = gr.Checkbox(
+                value=state.settings.bits_enabled,
+                label="Remember things to call back to",
+                info=help("The oddest specifics are noted every few lines.",
+                          "So a callback move can reach something that "
+                          "scrolled out of the context long ago. Survives "
+                          "topic switches. One small call, queued behind the "
+                          "next line."))
+            m_script = gr.Checkbox(
+                value=state.settings.script_framing,
+                label="Show the model a script, not a chat",
+                info=help("The conversation laid out as dialogue to continue.",
+                          "Chat turns are what an assistant is trained to be "
+                          "helpful inside; the same lines as a script read "
+                          "as fiction. Try it per model."))
+        with gr.Row():
+            m_takes = gr.Slider(
+                1, 5, value=state.settings.line_takes, step=1,
+                label="Takes per line",
+                info=help("Rewrites a weak line up to this many times. 1 "
+                          "turns the filter off.",
+                          "A take that opens by agreeing, explains itself, "
+                          "echoes a recent line or asks yet another question "
+                          "is written again; the least bad one plays. A "
+                          "clean first take costs nothing extra."))
+            m_judge = gr.Checkbox(
+                value=state.settings.line_judge,
+                label="Have the model pick the take",
+                info=help("Always writes every take, then asks which is "
+                          "best.",
+                          "Better lines for several times the LLM work per "
+                          "line. Watch the stage strip before leaving this "
+                          "on."))
+        with gr.Row():
+            m_min_p = gr.Slider(
+                0.0, 0.3, value=state.settings.min_p, step=0.01,
+                label="min-p (Ollama)",
+                info=help("0 leaves Ollama's own top-p and top-k in charge.",
+                          "Drops any token less likely than this fraction of "
+                          "the most likely one, which is what lets "
+                          "temperature go past 1.0 without lines falling "
+                          "apart. Try 0.05-0.1 with temperature 1.1-1.3."))
+            m_rep_pen = gr.Slider(
+                1.0, 1.5, value=state.settings.repeat_penalty, step=0.01,
+                label="Repeat penalty (Ollama)",
+                info=help("1.0 is off.",
+                          "Makes words already in the context less likely. "
+                          "Much past 1.2 it starts avoiding words it needs."))
 
-    gr.Markdown(
-        "### Between segments\n"
-        "What happens in the gap when the topic rotates. These are one feature: "
-        "rewriting characters takes tens of seconds, and the ad break is what "
-        "makes that inaudible instead of dead air."
-    )
-    with gr.Row():
-        m_evolve = gr.Checkbox(
-            value=state.settings.evolve_enabled,
-            label="Evolve characters between segments",
-            info="Re-reads what each speaker actually said and rewrites their "
-                 "dynamic system prompt from it, anchored to the base prompt you "
-                 "wrote. One model call per character, competing with "
-                 "tts-server for the card - see the VRAM note in DEADINTERNET.md.")
-        m_evolve_max = gr.Slider(
-            1, 12, value=state.settings.evolve_max_per_break, step=1,
-            label="Characters rewritten per break",
-            info="Only speakers who actually spoke are candidates, "
-                 "longest-unevolved first so a quiet character still comes round.")
-        m_evolve_wait = gr.Slider(
-            10, 300, value=state.settings.evolve_timeout_seconds, step=5,
-            label="Seconds to hold the next topic",
-            info="Past this the show carries on and the rewrites land whenever "
-                 "they finish - they apply on the next turn either way.")
-        m_evolve_chars = gr.Slider(
-            300, 1200, value=state.settings.evolve_max_chars, step=50,
-            label="Evolved prompt size (characters)",
-            info="Each rewrite rebuilds the prompt inside this budget instead "
-                 "of adding to it, and one that is already over gets condensed "
-                 "the next time that character is rewritten. Never below the "
-                 "length of the base prompt you wrote.")
-        m_evolve_think = gr.Checkbox(
-            value=state.settings.evolve_think,
-            label="Think before rewriting",
-            info="Separate from the thinking switch above, which is for spoken "
-                 "lines. Roughly a minute per character instead of ten seconds, "
-                 "and a model that reasons at length often runs out of room and "
-                 "gets retried without it anyway. Leave off unless you can see "
-                 "it helping.")
-    with gr.Row():
-        m_adbreak = gr.Checkbox(
-            value=state.settings.adbreak_enabled,
-            label="Play an ad break",
-            info="A random speaker reads an invented sponsor spot about "
-                 "something the segment actually covered, over a music bed.")
-        m_ad_gain = gr.Slider(
-            0.0, 1.0, value=state.settings.adbreak_music_gain, step=0.02,
-            label="Music level under the read")
-    m_ad_prompt = gr.Textbox(
-        value=state.settings.adbreak_prompt, lines=8,
-        label="Ad brief", placeholder=DEFAULT_AD_PROMPT,
-        info="How the sponsor read is written. Leave it empty to use the "
-             "default shown greyed out above - the segment's topic and "
-             "transcript are always appended underneath whatever you put here, "
-             "so you cannot accidentally write a brief that has nothing to go "
-             "on. Ask for a jingle, a public information film, a threat.")
-    m_ad_intro = gr.Checkbox(
-        value=state.settings.adbreak_intro_enabled,
-        label="Hand over to the break out loud",
-        info="The reader says a line before the spot - spoken while the ad is "
-             "still being written, so the break opens with someone talking "
-             "instead of with however long the model takes.")
-    m_ad_intro_tpl = gr.Textbox(
-        value=state.settings.adbreak_intro_template, lines=6,
-        label="Hand-off lines",
-        info="One per line, picked at random. {name} is whoever is reading, "
-             "{topic} is the segment that just ended.")
-    with gr.Group():
-        gr.Markdown("**Background music** - one track picked at random each break.")
+    with gr.Accordion("Between segments", open=False):
+        with gr.Row():
+            m_evolve = gr.Checkbox(
+                value=state.settings.evolve_enabled,
+                label="Evolve characters between segments",
+                info=help("Rewrites each speaker's dynamic prompt from what "
+                          "they actually said.",
+                          "Anchored to the base prompt you wrote. One model "
+                          "call per character, competing with tts-server "
+                          "for the card. Rewriting takes tens of seconds, "
+                          "and the ad break below is what makes that "
+                          "inaudible instead of dead air."))
+            m_evolve_max = gr.Slider(
+                1, 12, value=state.settings.evolve_max_per_break, step=1,
+                label="Characters rewritten per break",
+                info=help("Only speakers who actually spoke are candidates.",
+                          "Longest-unevolved first, so a quiet character "
+                          "still comes round."))
+            m_evolve_wait = gr.Slider(
+                10, 300, value=state.settings.evolve_timeout_seconds, step=5,
+                label="Seconds to hold the next topic",
+                info=help("Past this the show carries on.",
+                          "The rewrites land whenever they finish and apply "
+                          "on the next turn either way."))
+        with gr.Row():
+            m_evolve_chars = gr.Slider(
+                300, 1200, value=state.settings.evolve_max_chars, step=50,
+                label="Evolved prompt size (characters)",
+                info=help("Each rewrite rebuilds the prompt inside this "
+                          "budget.",
+                          "One that is already over gets condensed the next "
+                          "time that character is rewritten. Never below the "
+                          "length of the base prompt you wrote."))
+            m_evolve_think = gr.Checkbox(
+                value=state.settings.evolve_think,
+                label="Think before rewriting",
+                info=help("About a minute per character instead of ten "
+                          "seconds.",
+                          "Separate from the thinking switch above, which is "
+                          "for spoken lines. A model that reasons at length "
+                          "often runs out of room and is retried without it "
+                          "anyway. Leave off unless you can see it helping."))
+        with gr.Row():
+            m_adbreak = gr.Checkbox(
+                value=state.settings.adbreak_enabled,
+                label="Play an ad break",
+                info=help("A random speaker reads an invented sponsor spot "
+                          "over a music bed.",
+                          "About something the segment actually covered."))
+            m_ad_gain = gr.Slider(
+                0.0, 1.0, value=state.settings.adbreak_music_gain, step=0.02,
+                label="Music level under the read")
+        m_ad_prompt = gr.Textbox(
+            value=state.settings.adbreak_prompt, lines=6,
+            label="Ad brief", placeholder=DEFAULT_AD_PROMPT,
+            info=help("How the sponsor read is written. Empty uses the "
+                      "default shown greyed out.",
+                      "The segment's topic and transcript are always "
+                      "appended underneath, so a brief can never have "
+                      "nothing to go on. Ask for a jingle, a public "
+                      "information film, a threat."))
+        with gr.Row():
+            m_ad_intro = gr.Checkbox(
+                value=state.settings.adbreak_intro_enabled,
+                label="Hand over to the break out loud",
+                info=help("The reader says a line before the spot.",
+                          "Spoken while the ad is still being written, so "
+                          "the break opens with someone talking instead of "
+                          "with however long the model takes."))
+            m_ad_intro_tpl = gr.Textbox(
+                value=state.settings.adbreak_intro_template, lines=4,
+                label="Hand-off lines", scale=2,
+                info=help("One per line, picked at random.",
+                          "{name} is whoever is reading, {topic} is the "
+                          "segment that just ended."))
         with gr.Row():
             m_music_up = gr.File(
-                label="Add tracks", file_count="multiple", scale=3,
+                label="Background music", file_count="multiple", scale=1,
                 file_types=["audio"])
             with gr.Column(scale=1):
-                m_music_list = gr.Markdown(t_behaviour_music(app))
-                m_music_clear = gr.Button("Remove all", size="sm")
+                # A bounded box, not a bullet list: with forty tracks the list
+                # was the tallest thing on the tab.
+                m_music_list = gr.Markdown(
+                    t_behaviour_music(app), height=140, container=True,
+                    elem_classes=["music-box"])
+                m_music_clear = gr.Button("Remove all tracks", size="sm",
+                                          variant="stop", scale=0, min_width=150)
 
-    gr.Markdown("### Connection and interruption")
-    with gr.Row():
-        m_overlap = gr.Checkbox(
-            value=state.settings.sayas_overlap,
-            label="Let /sayas talk over whatever is playing",
-            info="Spamming the command puts several voices on the channel at "
-                 "once instead of queueing them. Only /sayas - the Say box and "
-                 "the microphone stay strictly in order.")
-        m_overlap_max = gr.Slider(
-            1, 6, value=state.settings.sayas_overlap_max, step=1,
-            label="Voices at once",
-            info="Counting whoever was already talking. Past three or so it "
-                 "stops being an argument and becomes noise.")
-    with gr.Row():
-        m_barge = gr.Checkbox(
-            value=state.settings.barge_in,
-            label="Interrupt the current line when someone types",
-            info="Only for a message that arrives with nothing already "
-                 "waiting. A rapid handful queues behind it instead of cutting "
-                 "off every sentence in a row.")
-        m_ack = gr.Checkbox(
-            value=state.settings.ack_sound,
-            label="Play a cue when a message is taken",
-            info="A short two-note blip, mixed over whoever is talking rather "
-                 "than interrupting them. Silence after typing means the "
-                 "message was refused, not that it was missed.")
-        m_queue_max = gr.Slider(
-            1, 30, value=state.settings.user_queue_max, step=1,
-            label="Messages held at once",
-            info="Everything held is answered, oldest first. Past this, new "
-                 "messages are refused and no cue plays.")
-        m_rejoin = gr.Checkbox(
-            value=state.settings.auto_rejoin, label="Rejoin automatically",
-            info="Discord ends the call when the last person leaves, and "
-                 "discord.py never comes back on its own. A watchdog rejoins as "
-                 "soon as somebody returns.")
-        m_pause_empty = gr.Checkbox(
-            value=state.settings.pause_when_empty,
-            label="Pause while the channel is empty",
-            info="Stop generating speech nobody can hear. After five minutes "
-                 "empty the conversation restarts instead of resuming.")
+    with gr.Accordion("Connection and interruption", open=False):
+        with gr.Row():
+            m_overlap = gr.Checkbox(
+                value=state.settings.sayas_overlap,
+                label="Let /sayas talk over whatever is playing",
+                info=help("Spamming the command puts several voices on at "
+                          "once.",
+                          "Only /sayas. The Say box and the microphone stay "
+                          "strictly in order."))
+            m_overlap_max = gr.Slider(
+                1, 6, value=state.settings.sayas_overlap_max, step=1,
+                label="Voices at once",
+                info=help("Counting whoever was already talking.",
+                          "Past three or so it stops being an argument and "
+                          "becomes noise."))
+        with gr.Row():
+            m_barge = gr.Checkbox(
+                value=state.settings.barge_in,
+                label="Interrupt the current line when someone types",
+                info=help("Only when nothing is already waiting.",
+                          "A rapid handful queues behind the first instead "
+                          "of cutting off every sentence in a row."))
+            m_ack = gr.Checkbox(
+                value=state.settings.ack_sound,
+                label="Play a cue when a message is taken",
+                info=help("A short two-note blip over whoever is talking.",
+                          "Silence after typing means the message was "
+                          "refused, not that it was missed."))
+            m_queue_max = gr.Slider(
+                1, 30, value=state.settings.user_queue_max, step=1,
+                label="Messages held at once",
+                info=help("Past this, new messages are refused and no cue "
+                          "plays.",
+                          "Everything held is answered, oldest first."))
+        with gr.Row():
+            m_rejoin = gr.Checkbox(
+                value=state.settings.auto_rejoin, label="Rejoin automatically",
+                info=help("A watchdog rejoins as soon as somebody returns.",
+                          "Discord ends the call when the last person "
+                          "leaves, and discord.py never comes back on its "
+                          "own."))
+            m_pause_empty = gr.Checkbox(
+                value=state.settings.pause_when_empty,
+                label="Pause while the channel is empty",
+                info=help("Stop generating speech nobody can hear.",
+                          "After five minutes empty the conversation "
+                          "restarts instead of resuming."))
 
-    gr.Markdown(
-        "### Spoken lines\n"
-        "One sentence **per line** in each box - a line is picked at random "
-        "each time, so the same event doesn't sound identical every occurrence. "
-        "Leave a box empty to say nothing.")
-
-    m_open_on = gr.Checkbox(value=state.settings.opening_enabled,
-                            label="Speak an opening when the conversation starts")
-    m_open_tpl = gr.Textbox(
-        value=state.settings.opening_template, lines=4, label="Opening",
-        info="Spoken once when you press Start. " + tpl_vars("opening_template"))
-
-    m_topic_tpl = gr.Textbox(
-        value=state.settings.topic_template, lines=4,
-        label="Topic switch announcement",
-        info="Read out on every topic change. " + tpl_vars("topic_template"))
-    m_topic_img_tpl = gr.Textbox(
-        value=state.settings.topic_image_template, lines=3,
-        label="Topic switch - image pins",
-        info="Added after the announcement when the pin is a picture, so "
-             "the channel knows why the subject changed to something with "
-             "no words in it. " + tpl_vars("topic_image_template"))
-
-    m_bye_on = gr.Checkbox(value=state.settings.goodbye_enabled,
-                           label="Say goodbye when you press Stop")
-    m_bye_tpl = gr.Textbox(
-        value=state.settings.goodbye_template, lines=4, label="Goodbye",
-        info="Spoken once after the current line is cut off, before the "
-             "bots go quiet. " + tpl_vars("goodbye_template"))
+    with gr.Accordion("Spoken lines", open=False):
+        with gr.Row():
+            m_open_on = gr.Checkbox(
+                value=state.settings.opening_enabled,
+                label="Speak an opening when the conversation starts",
+                info=help("One sentence per line in each box below; one is "
+                          "picked at random each time.",
+                          "So the same event does not sound identical every "
+                          "occurrence. Leave a box empty to say nothing."))
+            m_bye_on = gr.Checkbox(value=state.settings.goodbye_enabled,
+                                   label="Say goodbye when you press Stop")
+        with gr.Row():
+            m_open_tpl = gr.Textbox(
+                value=state.settings.opening_template, lines=4, label="Opening",
+                info=help("Spoken once when you press Start.",
+                          tpl_vars("opening_template")))
+            m_bye_tpl = gr.Textbox(
+                value=state.settings.goodbye_template, lines=4, label="Goodbye",
+                info=help("Spoken once after the current line is cut off.",
+                          tpl_vars("goodbye_template")))
+        with gr.Row():
+            m_topic_tpl = gr.Textbox(
+                value=state.settings.topic_template, lines=4,
+                label="Topic switch announcement",
+                info=help("Read out on every topic change.",
+                          tpl_vars("topic_template")))
+            m_topic_img_tpl = gr.Textbox(
+                value=state.settings.topic_image_template, lines=4,
+                label="Topic switch - image pins",
+                info=help("Added after the announcement when the pin is a "
+                          "picture.",
+                          "So the channel knows why the subject changed to "
+                          "something with no words in it. "
+                          + tpl_vars("topic_image_template")))
     return BehaviourPanel(
         m_reset=m_reset,
         m_open_on=m_open_on,

@@ -260,14 +260,16 @@ body ::-webkit-scrollbar-corner { background: transparent; }
 .roster-tool { align-self: center !important; flex: 0 0 auto !important; }
 
 /* ---- scrolling read-only panes --------------------------------------- */
-.transcript-box, .queue-box, .topic-box, .status-box {
+/* .music-box is the same surface but is not autoscrolled: a track list reads
+   from the top, where its count is. */
+.transcript-box, .queue-box, .topic-box, .status-box, .music-box {
   overflow-y: auto;
   background: var(--background-fill-secondary);
   border: 1px solid var(--border-color-primary);
   border-radius: var(--radius-sm);
   padding: 0.5rem 0.7rem;
 }
-.transcript-box p, .queue-box p, .status-box p { margin: 0.25rem 0; }
+.transcript-box p, .queue-box p, .status-box p, .music-box p { margin: 0.25rem 0; }
 .topic-box { font-size: var(--qp-fs-xl); }
 
 /* ---- microphone ------------------------------------------------------ */

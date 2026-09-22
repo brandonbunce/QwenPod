@@ -67,7 +67,8 @@ def music_report(app):
     tracks = music_tracks()
     if not tracks:
         return "_No music uploaded - ad breaks will play dry._"
-    return "\n".join(f"- `{os.path.basename(t)}`" for t in tracks)
+    head = f"**{len(tracks)} track{'s' if len(tracks) != 1 else ''}**, one picked at random each break."
+    return head + "\n\n" + "\n".join(f"- `{os.path.basename(t)}`" for t in tracks)
 
 
 def upload_music(app, files):

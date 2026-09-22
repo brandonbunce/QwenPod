@@ -228,23 +228,24 @@ RECOMMENDED = {
     "max_history": 12,
 }
 
-# Help text shown under each control.
+# Help for the four tuning sliders: (the line under the label, the tooltip).
 HELP = {
-    "gap_seconds":
-        "Silence left between speakers. 0 makes them cut each other off; 0.3-0.6 "
-        "sounds like people talking. The next line is generated during playback, "
-        "so this is pacing only - it does not add latency.",
-    "temperature":
-        "Randomness of the wording. Below ~0.7 personas get repetitive and bland. "
-        "With min-p at 0 they start losing the thread above ~1.1; with min-p on, "
-        "1.1-1.3 stays coherent and is noticeably less predictable.",
-    "num_predict":
-        "Length cap per utterance, in tokens. Roughly 80 = two spoken sentences. "
-        "Lines cut off by the cap are trimmed back to the last complete sentence, "
-        "so a low value shortens replies rather than mangling them.",
-    "max_history":
-        "How many previous turns each speaker sees. Higher keeps the thread but "
-        "grows every prompt, so turns take longer and the LLM costs more.",
+    "gap_seconds": (
+        "Silence between speakers. 0 makes them cut each other off.",
+        "0.3-0.6 sounds like people talking. The next line is generated "
+        "during playback, so this is pacing only; it does not add latency."),
+    "temperature": (
+        "Randomness of the wording. Below ~0.7 personas go bland.",
+        "With min-p at 0 they start losing the thread above ~1.1; with min-p "
+        "on, 1.1-1.3 stays coherent and is noticeably less predictable."),
+    "num_predict": (
+        "Length cap per line, in tokens. Roughly 80 = two sentences.",
+        "Lines cut off by the cap are trimmed back to the last complete "
+        "sentence, so a low value shortens replies rather than mangling them."),
+    "max_history": (
+        "How many previous turns each speaker sees.",
+        "Higher keeps the thread but grows every prompt, so turns take longer "
+        "and the LLM costs more."),
 }
 
 
