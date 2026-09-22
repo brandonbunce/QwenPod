@@ -5,10 +5,10 @@
 // pipeline_tts_load opens the talker GGUF and the codec GGUF, parses
 // every typed metadata block (specials, languages, speakers,
 // generation defaults), loads every weight tensor on the shared
-// backend and initialises both KV caches. pipeline_tts_synthesize
-// runs the prompt assembly, the autoregressive frame loop and the
-// codec decode in one pass; it fills the public qt_audio struct
-// directly so the facade in qwen.cpp stays a thin wrapper.
+// backend and initialises both KV caches. TtsEngine drives the prompt
+// assembly, the autoregressive frame loop and the codec decode over up
+// to max_batch slots; it fills the public qt_audio struct directly so
+// the facade in qwen.cpp stays a thin wrapper.
 
 #include "backend.h"
 #include "code-predictor-graph.h"
@@ -61,19 +61,6 @@ struct SpeakerEntry {
     std::string dialect;
 };
 
-struct GenerationDefaults {
-    bool  do_sample;
-    int   top_k;
-    float top_p;
-    float temperature;
-    float repetition_penalty;
-    bool  subtalker_do_sample;
-    int   subtalker_top_k;
-    float subtalker_top_p;
-    float subtalker_temperature;
-    int   max_new_tokens;
-};
-
 struct PromptPrefixCacheEntry {
     std::string        key;
     int                rows;
@@ -98,7 +85,8 @@ struct PromptCache {
 // the set reads and writes them across replays, so they never enter
 // gallocr pools.
 struct CodePredGraphSet {
-    CodePredGraph         frame;  // prefill and every acoustic step in one cgraph
+    CodePredGraph         frame;       // prefill and every acoustic step in one cgraph, fixed tail
+    CodePredGraph         frame_full;  // same frame with the per slot top_k / top_p tail, built on demand
     SamplerInputs         sampler;
     struct ggml_context * sampler_ctx = nullptr;
     ggml_backend_buffer_t sampler_buf = nullptr;
@@ -106,6 +94,7 @@ struct CodePredGraphSet {
 
 static inline void code_predictor_graph_set_free(CodePredGraphSet * s) {
     code_predictor_graph_free(&s->frame);
+    code_predictor_graph_free(&s->frame_full);
     if (s->sampler_buf) {
         ggml_backend_buffer_free(s->sampler_buf);
         s->sampler_buf = nullptr;
@@ -151,7 +140,6 @@ struct PipelineTTS {
     TextSpecials               text_specials;
     std::vector<LanguageEntry> languages;
     std::vector<SpeakerEntry>  speakers;
-    GenerationDefaults         gen_defaults;
     PromptCache                prompt_cache;
 
     BackendPair          bp;
@@ -216,33 +204,6 @@ void pipeline_tts_free(PipelineTTS * pt);
 
 struct BPETokenizer;
 
-// Run the full TTS pipeline: prompt assembly, prefill, frame loop with
-// sampling, codec decode, fill qt_audio. Reads every knob (text,
-// references, sampling, cancel, on_chunk, ...) straight from the
-// public qt_tts_params struct so the facade in qwen.cpp can hand it
-// off verbatim after the mode validation and seed resolve.
-//
-// Returns QT_STATUS_OK on success. On any failure returns a negative
-// qt_status with a diagnostic already routed through qt_log /
-// qt_set_error and leaves `out` empty. QT_STATUS_CANCELLED is returned
-// when params->cancel or params->on_chunk returns true / false
-// respectively during the AR loop.
-//
-// In buffered mode (params->on_chunk == NULL) the synthesised waveform
-// is malloc allocated into out->samples; the caller releases it with
-// qt_audio_free. In streaming mode (params->on_chunk != NULL) audio is
-// emitted through the callback as decoded chunks and out->samples
-// stays NULL on success.
-//
-// resolved_seed is the seed actually used for sampling: qt_synthesize
-// hands over the same value it logged so dump traces and replays line
-// up across runs even when params->seed was -1.
-qt_status pipeline_tts_synthesize(PipelineTTS *                pt,
-                                  BPETokenizer *               tok,
-                                  const struct qt_tts_params * params,
-                                  int64_t                      resolved_seed,
-                                  struct qt_audio *            out);
-
 // Convert a duration in seconds to a frame count at the codec frame
 // rate (24000 / TOKENIZER_HOP_LENGTH). Clamps to a
 // minimum of one frame.
@@ -268,9 +229,8 @@ struct TtsJob {
 // graphs. Slots always occupy KV sets [0, N); a retirement compacts
 // the range with one device side set copy so the batched views stay
 // consecutive. Single threaded: every call runs on the thread that
-// owns the GPU. pipeline_tts_synthesize drives a transient engine
-// synchronously for the one request case; the facade scheduler keeps a
-// long lived one on its worker thread.
+// owns the backend, which is the facade worker in qwen.cpp holding one
+// long lived engine per handle.
 struct TtsEngine;
 
 TtsEngine * tts_engine_new(PipelineTTS * pt, BPETokenizer * tok);

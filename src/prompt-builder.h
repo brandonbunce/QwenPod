@@ -148,12 +148,12 @@ static bool project_text_ids_backend(PipelineTTS * pt, const int32_t * ids, int 
     struct ggml_tensor * h = ggml_get_rows(gctx, pt->talker.text_embedding, ids_in);
     ggml_set_name(h, "prompt_text_embeds");
     h = ggml_mul_mat(gctx, pt->talker.text_proj_fc1_w, h);
-    ggml_mul_mat_set_prec(h, GGML_PREC_F32);
+    ggml_prec_set_acc(h, GGML_PREC_F32);
     h = ggml_add(gctx, h, pt->talker.text_proj_fc1_b);
     h = ggml_silu(gctx, h);
 
     struct ggml_tensor * out = ggml_mul_mat(gctx, pt->talker.text_proj_fc2_w, h);
-    ggml_mul_mat_set_prec(out, GGML_PREC_F32);
+    ggml_prec_set_acc(out, GGML_PREC_F32);
     out = ggml_add(gctx, out, pt->talker.text_proj_fc2_b);
     ggml_set_name(out, "prompt_text_projection");
     ggml_set_output(out);
@@ -282,7 +282,7 @@ static bool prompt_cache_load(PipelineTTS * pt) {
                                       (int32_t) pt->text_specials.tts_pad_id };
         std::vector<float> proj((size_t) 3 * (size_t) hidden);
         if (!project_text_ids_backend(pt, ids, 3, proj.data())) {
-            fprintf(stderr, "[Prompt] FATAL: special text projection failed\n");
+            qt_log(QT_LOG_ERROR, "[Prompt] FATAL: special text projection failed");
             return false;
         }
         std::memcpy(pc.tts_bos_emb.data(), proj.data() + (size_t) 0 * hidden, (size_t) hidden * sizeof(float));
@@ -377,7 +377,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
     const int hidden = pt->talker.hidden_size;
 
     if (!speaker_name.empty() && ref_spk_emb != NULL) {
-        fprintf(stderr, "[Prompt] FATAL: speaker_name and ref_spk_emb are mutually exclusive\n");
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: speaker_name and ref_spk_emb are mutually exclusive");
         return false;
     }
 
@@ -385,7 +385,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
     // Mode B requires ref_spk_emb so the speaker slot is also filled.
     const bool icl = !ref_text.empty() && ref_codes != NULL && ref_codes_T > 0;
     if (icl && ref_spk_emb == NULL) {
-        fprintf(stderr, "[Prompt] FATAL: ICL mode requires ref_spk_emb (no --ref-wav?)\n");
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: ICL mode requires ref_spk_emb (no --ref-wav?)");
         return false;
     }
 
@@ -400,7 +400,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
 
     std::vector<int> ids = bpe_encode(tok, full_text, /*add_eos=*/false);
     if ((int) ids.size() < 8) {
-        fprintf(stderr, "[Prompt] FATAL: tokenized prompt too short (%d tokens)\n", (int) ids.size());
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: tokenized prompt too short (%d tokens)", (int) ids.size());
         return false;
     }
 
@@ -408,7 +408,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
     const int N      = (int) ids.size();
     const int N_text = N - 3 - 5;
     if (N_text <= 0) {
-        fprintf(stderr, "[Prompt] FATAL: no utterance text in prompt (N=%d)\n", N);
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: no utterance text in prompt (N=%d)", N);
         return false;
     }
 
@@ -429,7 +429,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
                 }
             }
             if (language_id < 0) {
-                fprintf(stderr, "[Prompt] FATAL: unknown language '%s'\n", language.c_str());
+                qt_log(QT_LOG_ERROR, "[Prompt] FATAL: unknown language '%s'", language.c_str());
                 return false;
             }
         }
@@ -453,7 +453,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
             }
         }
         if (!found) {
-            fprintf(stderr, "[Prompt] FATAL: unknown speaker '%s'\n", speaker_name.c_str());
+            qt_log(QT_LOG_ERROR, "[Prompt] FATAL: unknown speaker '%s'", speaker_name.c_str());
             return false;
         }
         speaker_id = found->id;
@@ -475,7 +475,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
                     }
                 }
                 if (dialect_id < 0) {
-                    fprintf(stderr, "[Prompt] FATAL: dialect '%s' not in language table\n", found->dialect.c_str());
+                    qt_log(QT_LOG_ERROR, "[Prompt] FATAL: dialect '%s' not in language table", found->dialect.c_str());
                     return false;
                 }
                 language_id = dialect_id;
@@ -484,7 +484,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
     }
 
     if (!pt->prompt_cache.initialized) {
-        fprintf(stderr, "[Prompt] FATAL: prompt cache is not initialized\n");
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: prompt cache is not initialized");
         return false;
     }
     PromptCache & pc = pt->prompt_cache;
@@ -550,13 +550,13 @@ static bool prompt_builder_build(PipelineTTS *         pt,
         ref_full += "<|im_end|>\n<|im_start|>assistant\n";
         ref_ids = bpe_encode(tok, ref_full, /*add_eos=*/false);
         if ((int) ref_ids.size() < 8) {
-            fprintf(stderr, "[Prompt] FATAL: ref_text tokenized too short (%d tokens)\n", (int) ref_ids.size());
+            qt_log(QT_LOG_ERROR, "[Prompt] FATAL: ref_text tokenized too short (%d tokens)", (int) ref_ids.size());
             return false;
         }
         // ref_ids[3: -5] is the inner ref text body without role tokens
         N_ref_text = (int) ref_ids.size() - 3 - 5;
         if (N_ref_text <= 0) {
-            fprintf(stderr, "[Prompt] FATAL: empty ref_text body\n");
+            qt_log(QT_LOG_ERROR, "[Prompt] FATAL: empty ref_text body");
             return false;
         }
     }
@@ -744,7 +744,7 @@ static bool prompt_builder_build(PipelineTTS *         pt,
     }
 
     if (row != T_ctx) {
-        fprintf(stderr, "[Prompt] FATAL: layout error row=%d expected T_ctx=%d\n", row, T_ctx);
+        qt_log(QT_LOG_ERROR, "[Prompt] FATAL: layout error row=%d expected T_ctx=%d", row, T_ctx);
         return false;
     }
 
@@ -767,12 +767,12 @@ static bool prompt_builder_build(PipelineTTS *         pt,
 
     out->tts_pad_embed = tts_pad_emb;
 
-    fprintf(stderr,
-            "[Prompt] Built: %d ids, N_text=%d, N_instruct=%d, T_ctx=%d, hidden=%d, lang=%s (id=%d), speaker=%s "
-            "(id=%d) ref_spk_emb=%s icl=%s\n",
-            N, N_text, N_instruct, T_ctx, hidden, language.c_str(), language_id,
-            speaker_name.empty() ? "none" : speaker_name.c_str(), speaker_id, ref_spk_emb ? "yes" : "no",
-            icl ? "yes" : "no");
+    qt_log(QT_LOG_INFO,
+           "[Prompt] Built: %d ids, N_text=%d, N_instruct=%d, T_ctx=%d, hidden=%d, lang=%s (id=%d), speaker=%s "
+           "(id=%d) ref_spk_emb=%s icl=%s",
+           N, N_text, N_instruct, T_ctx, hidden, language.c_str(), language_id,
+           speaker_name.empty() ? "none" : speaker_name.c_str(), speaker_id, ref_spk_emb ? "yes" : "no",
+           icl ? "yes" : "no");
 
     return true;
 }

@@ -172,7 +172,7 @@ static struct ggml_tensor * code_predictor_layer_forward(struct ggml_context *  
     struct ggml_tensor * attn;
     if (use_flash_attn) {
         attn = ggml_flash_attn_ext(ctx, q_p, k_full, v_full, mask, scale, 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(attn, GGML_PREC_F32);
+        ggml_prec_set_acc(attn, GGML_PREC_F32);
     } else {
         attn = code_predictor_attn_f32(ctx, q_p, k_full, v_full, mask, scale);
     }
@@ -273,6 +273,7 @@ static void code_predictor_pass_append(struct ggml_context *           gctx,
                                        struct ggml_tensor *            embd_table,
                                        struct ggml_tensor *            hidden_bridge,
                                        SamplerInputs *                 sp,
+                                       enum SamplerTail                tail,
                                        int                             g_head,
                                        int                             N,
                                        bool                            use_flash_attn,
@@ -356,7 +357,7 @@ static void code_predictor_pass_append(struct ggml_context *           gctx,
     ggml_set_output(logits);
     ggml_build_forward_expand(gf, logits);
 
-    ggml_build_forward_expand(gf, sampler_tail_build(gctx, logits, sp, g_head));
+    ggml_build_forward_expand(gf, sampler_tail_build(gctx, logits, sp, g_head, tail));
 
     bake.push_back({ pos_in, rows_in, mask_in, T, n_past });
     *logits_out = logits;
@@ -368,13 +369,14 @@ static void code_predictor_pass_append(struct ggml_context *           gctx,
 // prefill c0 embedding, each step embeds through its own codebook
 // table. Pass order in the node list carries the data dependencies:
 // every step reads the codes row and the kv rows its predecessors
-// wrote.
+// wrote. tail selects the sampling flavor baked into every pass.
 static bool code_predictor_frame_graph_build(const CodePredictorWeights * cw,
                                              KVCache *                    kv,
                                              ggml_backend_t               backend,
                                              struct ggml_tensor *         talker_embd_table,
                                              struct ggml_tensor *         hidden_bridge,
                                              SamplerInputs *              sp,
+                                             enum SamplerTail             tail,
                                              int                          N,
                                              bool                         use_flash_attn,
                                              bool                         clamp_fp16,
@@ -388,7 +390,7 @@ static bool code_predictor_frame_graph_build(const CodePredictorWeights * cw,
     struct ggml_init_params gp = { bytes, NULL, true };
     cp->ctx                    = ggml_init(gp);
     if (!cp->ctx) {
-        fprintf(stderr, "[CodePredictor] FATAL: frame graph ctx allocation failed\n");
+        qt_log(QT_LOG_ERROR, "[CodePredictor] FATAL: frame graph ctx allocation failed");
         return false;
     }
     struct ggml_cgraph * gf = ggml_new_graph_custom(cp->ctx, max_nodes, false);
@@ -397,16 +399,16 @@ static bool code_predictor_frame_graph_build(const CodePredictorWeights * cw,
     bake.reserve((size_t) n_acoustic);
     struct ggml_tensor * logits = NULL;
 
-    code_predictor_pass_append(cp->ctx, gf, cw, kv, talker_embd_table, hidden_bridge, sp, 0, N, use_flash_attn,
+    code_predictor_pass_append(cp->ctx, gf, cw, kv, talker_embd_table, hidden_bridge, sp, tail, 0, N, use_flash_attn,
                                clamp_fp16, &logits, bake);
     for (int g = 1; g < n_acoustic; g++) {
-        code_predictor_pass_append(cp->ctx, gf, cw, kv, cw->codec_embedding[(size_t) (g - 1)], NULL, sp, g, N,
+        code_predictor_pass_append(cp->ctx, gf, cw, kv, cw->codec_embedding[(size_t) (g - 1)], NULL, sp, tail, g, N,
                                    use_flash_attn, clamp_fp16, &logits, bake);
     }
 
     cp->galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!cp->galloc || !ggml_gallocr_alloc_graph(cp->galloc, gf)) {
-        fprintf(stderr, "[CodePredictor] FATAL: frame graph allocation failed\n");
+        qt_log(QT_LOG_ERROR, "[CodePredictor] FATAL: frame graph allocation failed");
         code_predictor_graph_free(cp);
         return false;
     }
@@ -421,31 +423,29 @@ static bool code_predictor_frame_graph_build(const CodePredictorWeights * cw,
 // Run the predictor for one audio frame through the unrolled frame
 // graph, all N slots in lockstep: the host writes c0 into row 0 of the
 // codes accumulator, uploads the per frame sampler state, replays one
-// graph, then reads the [N, 16] accumulator back in one transfer. Per
-// slot temperature controls greedy (temperature <= 0) vs stochastic;
-// seed and subseq_base index each slot's Philox stream, subseq_base[i]
-// being the subsequence of slot i's c0 sample (the 15 acoustic samples
-// consume subseq_base[i] + 1 .. subseq_base[i] + 15). Fills out->codes
-// as [N * 16] slot major. dump_dir may be NULL and applies to slot 0.
+// graph, then reads the [N, 16] accumulator back in one transfer.
+// slots[i] carries slot i's sampling controls and Philox stream,
+// subseq_base being the subsequence of its c0 sample (the 15 acoustic
+// samples consume subseq_base + 1 .. subseq_base + 15). Fills
+// out->codes as [N * 16] slot major. dump_dir may be NULL and applies
+// to slot 0.
 static bool code_predictor_frame_step(const CodePredictorWeights * cw,
                                       ggml_backend_t               backend,
                                       CodePredGraph *              frame_graph,
                                       SamplerInputs *              sp,
                                       const int32_t *              c0,
+                                      const SamplerSlot *          slots,
                                       int                          N,
-                                      const float *                temperature,
-                                      const int64_t *              seed,
-                                      const int64_t *              subseq_base,
                                       const char *                 dump_dir,
                                       CodePredictorOutput *        out) {
     const int n_acoustic = cw->num_acoustic_codebooks;
     const int n_codes    = n_acoustic + 1;
 
     ggml_backend_tensor_set(sp->codes, c0, 0, (size_t) N * sizeof(int32_t));
-    sampler_inputs_upload(sp, temperature, seed, subseq_base, N);
+    sampler_inputs_upload(sp, slots, N);
 
     if (ggml_backend_graph_compute(backend, frame_graph->gf) != GGML_STATUS_SUCCESS) {
-        fprintf(stderr, "[CodePredictor] FATAL: frame graph compute failed\n");
+        qt_log(QT_LOG_ERROR, "[CodePredictor] FATAL: frame graph compute failed");
         return false;
     }
 

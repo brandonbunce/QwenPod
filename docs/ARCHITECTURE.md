@@ -134,7 +134,7 @@ metadata
   qwen3-tts.codec.language_names / language_ids
   qwen3-tts.codec.speaker_names / speaker_ids / speaker_dialects  (custom_voice)
   qwen3-tts.text.{im_start,im_end,tts_pad,tts_bos,tts_eos}_id
-  generation.*                                   sampling defaults
+  generation.*                                   generation_config.json of the checkpoint, informational
   tokenizer (Qwen2 BPE, 151676 vocab, 151291 merges, eos 151643)
 
 tensors
@@ -512,7 +512,7 @@ hash and commit date.
 
 ### Low-level API : src/pipeline-tts.h, src/pipeline-codec.h
 
-Direct access to `pipeline_tts_load` / `pipeline_tts_synthesize`,
+Direct access to `pipeline_tts_load` / `tts_engine_admit` / `tts_engine_step`,
 `pipeline_codec_encode` / `pipeline_codec_decode`,
 `pipeline_codec_stream_reset` / `pipeline_codec_decode_stream`,
 `codec_chunked_decode`, and the talker / predictor forwards. Used by the
@@ -569,14 +569,14 @@ Optional:
 
 Sampling:
   --seed <int>            Sampling seed (default: -1 for random)
-  --greedy                Disable stochastic sampling on both stacks
-  --temp <f>              Talker temperature (default: 0.9)
+  --greedy                Argmax on both stacks (temperature 0)
+  --temp <f>              Talker temperature (default: 0.9, 0 selects argmax)
   --top-k <n>             Talker top-k (default: 50, 0 disables)
-  --top-p <f>             Talker top-p (default: 1.0)
+  --top-p <f>             Talker top-p (default: 1, 1 disables)
   --rep-pen <f>           Talker repetition penalty (default: 1.05)
-  --sub-temp <f>          Sub-talker temperature (default: 0.9)
-  --sub-top-k <n>         Sub-talker top-k (default: 50)
-  --sub-top-p <f>         Sub-talker top-p (default: 1.0)
+  --sub-temp <f>          Sub-talker temperature (default: 0.9, 0 selects argmax)
+  --sub-top-k <n>         Sub-talker top-k (default: 50, 0 disables)
+  --sub-top-p <f>         Sub-talker top-p (default: 1, 1 disables)
 
 Debug:
   --no-fa                 Disable flash attention
@@ -630,7 +630,7 @@ Optional:
   --alias <name>          Report this model id instead of the GGUF file name
   --host <ip>             Listen address (default: 127.0.0.1)
   --port <n>              Listen port (default: 8080)
-  --lang <n>              Language label (default: auto)
+  --lang <name>           Language label when a request omits one (default: auto)
   --no-fa                 Disable flash attention
   --clamp-fp16            Clamp hidden states to FP16 range
 ```
@@ -641,12 +641,16 @@ Endpoints :
 POST   /v1/audio/speech         OAI text-to-speech; response_format "pcm"
                                 streams s16le 24 kHz mono chunked as it is
                                 generated, "wav" returns a one-shot RIFF file.
+                                language overrides --lang for this request,
+                                an unknown one is a 400.
                                 Optional sampling overrides ride in the same
-                                body: seed, max_new_tokens, temperature,
-                                top_k, top_p, repetition_penalty. Unset
-                                fields keep the engine defaults, temperature
-                                0 selects greedy decoding, the subtalker
-                                mirrors the talker knobs
+                                body, one set per stack: seed, max_new_tokens,
+                                temperature, top_k, top_p, repetition_penalty
+                                for the talker, subtalker_temperature,
+                                subtalker_top_k, subtalker_top_p for the
+                                sub-talker. Unset fields keep the engine
+                                defaults, temperature 0 selects greedy
+                                decoding on that stack
 GET    /v1/models               single loaded model, using --alias when set
 GET    /v1/audio/voices         model speakers plus registered cloned voices
 POST   /v1/audio/voices         register a cloned voice: {name, ref_text,

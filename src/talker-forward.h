@@ -42,6 +42,7 @@
 #include "ggml.h"
 #include "graph-arena.h"
 #include "kv-cache.h"
+#include "qt-error.h"
 #include "talker-decode-graph.h"
 #include "talker-weights.h"
 
@@ -219,7 +220,7 @@ static struct ggml_tensor * talker_layer_forward(struct ggml_context * ctx,
     struct ggml_tensor * attn;
     if (use_flash_attn) {
         attn = ggml_flash_attn_ext(ctx, q_p, k_full, v_full, mask, scale, 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(attn, GGML_PREC_F32);
+        ggml_prec_set_acc(attn, GGML_PREC_F32);
     } else {
         attn = talker_attn_f32(ctx, q_p, k_full, v_full, mask, scale);
     }
@@ -369,7 +370,7 @@ static bool talker_forward_core(const TalkerWeights * tw,
 
     ggml_backend_sched_reset(sched);
     if (!ggml_backend_sched_alloc_graph(sched, gf)) {
-        fprintf(stderr, "[TalkerForward] FATAL: graph allocation failed\n");
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: graph allocation failed");
         ggml_backend_sched_reset(sched);
         return false;
     }
@@ -413,7 +414,7 @@ static bool talker_forward_core(const TalkerWeights * tw,
     }
 
     if (ggml_backend_sched_graph_compute(sched, gf) != GGML_STATUS_SUCCESS) {
-        fprintf(stderr, "[TalkerForward] FATAL: graph compute failed\n");
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: graph compute failed");
         ggml_backend_sched_reset(sched);
         return false;
     }
@@ -480,7 +481,7 @@ static bool talker_forward_prefill(const TalkerWeights * tw,
                                    TalkerForwardOutput * out) {
     kv_cache_reset(kv, kv_set);
     if (T > kv->max_seq_len) {
-        fprintf(stderr, "[TalkerForward] FATAL: prefill T=%d exceeds cache max_seq_len=%d\n", T, kv->max_seq_len);
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: prefill T=%d exceeds cache max_seq_len=%d", T, kv->max_seq_len);
         return false;
     }
     return talker_forward_core(tw, kv, kv_set, sched, arena, hidden_bridge, input_embed, T, 0, use_flash_attn,
@@ -579,7 +580,7 @@ static struct ggml_tensor * talker_layer_forward_batch(struct ggml_context * ctx
     struct ggml_tensor * attn;
     if (use_flash_attn) {
         attn = ggml_flash_attn_ext(ctx, q4, k_batch, v_batch, mask, scale, 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(attn, GGML_PREC_F32);
+        ggml_prec_set_acc(attn, GGML_PREC_F32);
     } else {
         attn = talker_attn_f32(ctx, q4, k_batch, v_batch, mask, scale);
     }
@@ -640,7 +641,7 @@ static bool talker_decode_graph_build(const TalkerWeights *        tw,
     struct ggml_init_params gp = { bytes, NULL, true };
     tg->ctx                    = ggml_init(gp);
     if (!tg->ctx) {
-        fprintf(stderr, "[TalkerForward] FATAL: decode graph ctx allocation failed\n");
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: decode graph ctx allocation failed");
         return false;
     }
     struct ggml_context * gctx = tg->ctx;
@@ -697,7 +698,7 @@ static bool talker_decode_graph_build(const TalkerWeights *        tw,
 
     tg->galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!tg->galloc || !ggml_gallocr_alloc_graph(tg->galloc, gf)) {
-        fprintf(stderr, "[TalkerForward] FATAL: decode graph allocation failed\n");
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: decode graph allocation failed");
         talker_decode_graph_free(tg);
         return false;
     }
@@ -745,8 +746,8 @@ static bool talker_forward_decode(const TalkerWeights *            tw,
     for (int i = 0; i < N; i++) {
         const int len = kv->cur_len[(size_t) i] + 1;
         if (len > kv->max_seq_len) {
-            fprintf(stderr, "[TalkerForward] FATAL: decode would overflow cache (%d > %d, set %d)\n", len,
-                    kv->max_seq_len, i);
+            qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: decode would overflow cache (%d > %d, set %d)", len,
+                   kv->max_seq_len, i);
             return false;
         }
         if (len > max_len) {
@@ -791,7 +792,7 @@ static bool talker_forward_decode(const TalkerWeights *            tw,
     }
 
     if (ggml_backend_graph_compute(backend, tg->gf) != GGML_STATUS_SUCCESS) {
-        fprintf(stderr, "[TalkerForward] FATAL: decode graph compute failed\n");
+        qt_log(QT_LOG_ERROR, "[TalkerForward] FATAL: decode graph compute failed");
         return false;
     }
 

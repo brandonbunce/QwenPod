@@ -59,13 +59,13 @@ extern "C" {
 // git short hash + commit date string returned by qt_version(); for
 // binding compat checks, QT_ABI_VERSION is the only number that
 // matters.
-#define QT_ABI_VERSION 4
+#define QT_ABI_VERSION 5
 
-// Oldest struct layout this build addresses. A v3 or older
+// Oldest struct layout this build addresses. A v4 or older
 // qt_tts_params places its trailing fields at offsets this build does
 // not map, so such a struct is unreadable here and its caller rebuilds
 // against this header.
-#define QT_ABI_MIN_VERSION 4
+#define QT_ABI_MIN_VERSION 5
 
 // Returns a static string of the form "<git-hash> (<date>)" identifying
 // the exact commit this binary was built from. Safe to call from any
@@ -132,14 +132,14 @@ struct qt_init_params {
 
     // Maximum number of concurrent synthesis requests batched
     // on the GPU. 0 and 1 select the single sequence behavior; values
-    // above 1 size the KV cache sets accordingly and start an internal
-    // worker thread that coalesces concurrent qt_synthesize calls into
-    // batched decode steps, queueing FIFO beyond max_batch. With
-    // max_batch > 1 the on_chunk and cancel callbacks of every request
-    // are invoked from that worker thread, not from the calling
-    // thread; callbacks must be safe to run there and must not call
-    // back into the qwen_* API. qt_synthesize itself stays blocking
-    // and thread safe in both modes.
+    // above 1 size the KV cache sets accordingly and let the internal
+    // worker thread coalesce concurrent qt_synthesize calls into
+    // batched decode steps, queueing FIFO beyond max_batch. That worker
+    // owns every backend compute on the handle whatever the width, so
+    // the on_chunk and cancel callbacks of every request are invoked
+    // from it and never from the calling thread; callbacks must be safe
+    // to run there and must not call back into the qwen_* API.
+    // qt_synthesize itself stays blocking and thread safe.
     int max_batch;
 
     // Chunk width of the buffered codec decode, in seconds of
@@ -276,7 +276,8 @@ struct qt_tts_params {
     // Input text and language hint. text is required and non empty.
     // lang accepts the upstream qwen3-tts language names ("english",
     // "chinese", "auto", ...). NULL selects "auto": the prompt carries
-    // no language id and the model infers it from the text.
+    // no language id and the model infers it from the text. A name
+    // outside qt_language_name and "auto" is QT_STATUS_INVALID_PARAMS.
     // instruct is the style instruction string; required for
     // voice_design, optional for custom_voice, rejected for base.
     // speaker is the named speaker for custom_voice models, rejected
@@ -295,20 +296,21 @@ struct qt_tts_params {
     int           ref_n_samples;
     const char *  ref_text;
 
-    // Sampling configuration. seed == -1 is resolved by qt_synthesize
-    // to a hardware random seed via std::random_device, anything else
-    // is forwarded verbatim for deterministic replay across runs.
-    // Defaults match the upstream Python reference: do_sample true,
-    // temperature 0.9, top_k 50, top_p 1.0, repetition_penalty 1.05,
-    // subtalker mirrors talker, max_new_tokens 2048.
+    // Sampling configuration, one independent sampler per stack as in
+    // the upstream reference: the talker draws c0 with temperature,
+    // top_k, top_p and repetition_penalty, the sub-talker draws the
+    // acoustic codes with its own temperature, top_k and top_p. A
+    // temperature of 0 selects argmax on that stack; top_k <= 0 and
+    // top_p >= 1 disable the respective cutoff. seed == -1 is resolved
+    // by qt_synthesize to a hardware random seed via std::random_device,
+    // anything else is forwarded verbatim for deterministic replay.
+    // Defaults come from sampling-defaults.h.
     int64_t seed;
     int     max_new_tokens;
-    bool    do_sample;
     float   temperature;
     int     top_k;
     float   top_p;
     float   repetition_penalty;
-    bool    subtalker_do_sample;
     float   subtalker_temperature;
     int     subtalker_top_k;
     float   subtalker_top_p;
@@ -327,12 +329,11 @@ struct qt_tts_params {
     // the streaming pipeline: audio chunks emit through on_chunk and
     // `out` stays empty on success. on_chunk NULL keeps the buffered
     // path. The last chunk on EOS or max_new flushes whatever frames
-    // remain. With qt_init_params.max_batch > 1 the callback runs on
-    // the internal batch worker thread, not the qt_synthesize caller
-    // thread: it must be safe there, must not call back into the
-    // qwen_* API, and a blocking body stalls every batched request, so
-    // hand the samples to the consumer thread through a queue instead
-    // of blocking.
+    // remain. The callback runs on the internal compute worker thread,
+    // not the qt_synthesize caller thread: it must be safe there, must
+    // not call back into the qwen_* API, and a blocking body stalls
+    // every batched request, so hand the samples to the consumer thread
+    // through a queue instead of blocking.
     qt_audio_chunk_cb on_chunk;
     void *            on_chunk_user_data;
 
@@ -350,10 +351,9 @@ struct qt_tts_params {
     int             ref_T;
 };
 
-// Initialise to the standard defaults. Strings NULL, seed -1,
-// max_new_tokens 2048, do_sample true, temperature 0.9, top_k 50,
-// top_p 1.0, repetition_penalty 1.05, subtalker mirrors talker,
-// dump_dir NULL, cancel NULL, on_chunk NULL.
+// Initialise to the standard defaults. Strings NULL, seed -1, sampling
+// fields from sampling-defaults.h, dump_dir NULL, cancel NULL, on_chunk
+// NULL.
 QT_API void qt_tts_default_params(struct qt_tts_params * p);
 
 // Number of RVQ codebooks (K) of the loaded codec. Pre-encoded ICL
@@ -364,7 +364,7 @@ QT_API int qt_num_codebooks(const struct qt_context * q);
 
 // Run the full TTS synthesis. Validates the params against the loaded
 // model_type (the seven base / custom_voice / voice_design rules),
-// resolves the seed, hands off to pipeline_tts_synthesize and fills
+// resolves the seed, hands the request to the compute worker and fills
 // `out` with mono float PCM at 24 kHz in buffered mode.
 // In streaming mode (params->on_chunk != NULL), audio is emitted
 // through the callback and `out` stays empty. Returns QT_STATUS_OK on
@@ -384,6 +384,21 @@ QT_API int qt_n_speakers(const struct qt_context * q);
 // Name of speaker i, valid for i in [0, qt_n_speakers). Returns NULL when
 // i is out of range. The pointer stays valid until qt_free. UTF-8.
 QT_API const char * qt_speaker_name(const struct qt_context * q, int i);
+
+// Number of languages the loaded model carries in its codec table. The
+// synthesis also accepts "auto", which is not part of this list: it inserts
+// no language id and lets the model infer one from the text.
+QT_API int qt_n_languages(const struct qt_context * q);
+
+// Name of language i, valid for i in [0, qt_n_languages). Returns NULL when
+// i is out of range. The pointer stays valid until qt_free. Lowercase ASCII,
+// the spelling qt_tts_params.lang expects.
+QT_API const char * qt_language_name(const struct qt_context * q, int i);
+
+// Model type of the loaded talker: "base", "custom_voice" or
+// "voice_design". Voice references are only valid on "base". The pointer
+// stays valid until qt_free.
+QT_API const char * qt_model_type(const struct qt_context * q);
 
 #ifdef __cplusplus
 }

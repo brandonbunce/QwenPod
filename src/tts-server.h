@@ -24,9 +24,11 @@
 
 #include "../vendor/cpp-httplib/httplib.h"
 #include "audio-io.h"
+#include "qt-error.h"
 #include "yyjson.h"
 
 #include <atomic>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <condition_variable>
@@ -43,19 +45,24 @@
 // One synthesis request parsed from the OAI JSON body.
 struct tts_request {
     std::string input;         // text to speak
+    std::string lang;          // language label, empty keeps the server default
     std::string voice;         // OAI voice, mapped to a speaker by the adapter
     std::string instructions;  // OAI instructions, mapped to the ABI instruct field
     std::string format;        // "pcm" (stream) or "wav" (one-shot)
     float       speed;         // OAI speed, parsed then ignored (no time stretch in the ABI)
 
-    // Optional sampling overrides. -1 (ints) and NaN (floats) mark a
-    // field the client left unset, keeping the engine defaults.
-    int64_t seed;                // forwarded verbatim, -1 draws a random seed
-    int     max_new_tokens;      // strictly positive
-    int     top_k;               // 0 disables the top-k filter
-    float   temperature;         // 0 selects greedy decoding
-    float   top_p;               // in (0, 1]
-    float   repetition_penalty;  // strictly positive
+    // Optional sampling overrides, one set per stack. -1 (ints) and NaN
+    // (floats) mark a field the client left unset, keeping the engine
+    // defaults.
+    int64_t seed;                   // forwarded verbatim, -1 draws a random seed
+    int     max_new_tokens;         // strictly positive
+    int     top_k;                  // 0 disables the top-k filter
+    float   temperature;            // 0 selects greedy decoding
+    float   top_p;                  // in (0, 1]
+    float   repetition_penalty;     // strictly positive
+    int     subtalker_top_k;        // 0 disables the top-k filter
+    float   subtalker_temperature;  // 0 selects greedy decoding
+    float   subtalker_top_p;        // in (0, 1]
 };
 
 // One voice registration parsed from the POST /v1/audio/voices JSON body.
@@ -128,6 +135,17 @@ static void tts_append_s16le(std::string & out, const float * samples, int n_sam
     }
 }
 
+// Voice names are case insensitive: the registry, the synthesis lookup
+// and the delete route all see the lowercase form, matching the model
+// speaker lookup.
+static std::string tts_voice_name(const char * s) {
+    std::string out(s);
+    for (char & c : out) {
+        c = (char) std::tolower((unsigned char) c);
+    }
+    return out;
+}
+
 // Write a JSON error body in the OAI error envelope and set the status.
 static void tts_json_error(httplib::Response & res, int status, const char * type, const char * message) {
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(NULL);
@@ -169,7 +187,10 @@ static bool tts_parse_request(const std::string & body, tts_request & req, std::
     req.input = yyjson_get_str(input);
 
     yyjson_val * voice = yyjson_obj_get(root, "voice");
-    req.voice          = yyjson_is_str(voice) ? yyjson_get_str(voice) : "";
+    req.voice          = yyjson_is_str(voice) ? tts_voice_name(yyjson_get_str(voice)) : "";
+
+    yyjson_val * language = yyjson_obj_get(root, "language");
+    req.lang              = yyjson_is_str(language) ? yyjson_get_str(language) : "";
 
     yyjson_val * instructions = yyjson_obj_get(root, "instructions");
     req.instructions          = yyjson_is_str(instructions) ? yyjson_get_str(instructions) : "";
@@ -182,12 +203,15 @@ static bool tts_parse_request(const std::string & body, tts_request & req, std::
 
     // Optional sampling overrides. A missing field keeps its unset
     // marker; a present field must be well typed and in domain.
-    req.seed               = -1;
-    req.max_new_tokens     = -1;
-    req.top_k              = -1;
-    req.temperature        = NAN;
-    req.top_p              = NAN;
-    req.repetition_penalty = NAN;
+    req.seed                  = -1;
+    req.max_new_tokens        = -1;
+    req.top_k                 = -1;
+    req.temperature           = NAN;
+    req.top_p                 = NAN;
+    req.repetition_penalty    = NAN;
+    req.subtalker_top_k       = -1;
+    req.subtalker_temperature = NAN;
+    req.subtalker_top_p       = NAN;
 
     auto opt_int = [&](const char * key, int64_t lo, int64_t hi, int64_t & out) -> bool {
         yyjson_val * v = yyjson_obj_get(root, key);
@@ -214,14 +238,19 @@ static bool tts_parse_request(const std::string & body, tts_request & req, std::
         return true;
     };
 
-    int64_t max_new = -1;
-    int64_t top_k   = -1;
+    int64_t max_new   = -1;
+    int64_t top_k     = -1;
+    int64_t sub_top_k = -1;
     bool    ok = opt_int("seed", INT64_MIN, INT64_MAX, req.seed) && opt_int("max_new_tokens", 1, INT32_MAX, max_new) &&
               opt_int("top_k", 0, INT32_MAX, top_k) && opt_num("temperature", 0.0, FLT_MAX, req.temperature) &&
               opt_num("top_p", DBL_MIN, 1.0, req.top_p) &&
-              opt_num("repetition_penalty", DBL_MIN, FLT_MAX, req.repetition_penalty);
-    req.max_new_tokens = (int) max_new;
-    req.top_k          = (int) top_k;
+              opt_num("repetition_penalty", DBL_MIN, FLT_MAX, req.repetition_penalty) &&
+              opt_int("subtalker_top_k", 0, INT32_MAX, sub_top_k) &&
+              opt_num("subtalker_temperature", 0.0, FLT_MAX, req.subtalker_temperature) &&
+              opt_num("subtalker_top_p", DBL_MIN, 1.0, req.subtalker_top_p);
+    req.max_new_tokens  = (int) max_new;
+    req.top_k           = (int) top_k;
+    req.subtalker_top_k = (int) sub_top_k;
 
     yyjson_doc_free(doc);
 
@@ -287,11 +316,19 @@ static void tts_handle_speech(const tts_backend & be, const httplib::Request & h
     // chunk callback aborts generation and frees the GPU instead of
     // finishing a stream nobody reads. Backpressure is the utterance
     // itself: pending grows at most to the full PCM of one synthesis.
+    //
+    // The stream opens on the first chunk: a synthesis that fails
+    // before producing audio gets the JSON error envelope with the
+    // mapped status, like the wav path. A failure after the stream
+    // started closes the connection without the terminating chunk, so
+    // the client sees a transport error instead of a clean EOF.
     struct stream_state {
         std::mutex              mu;
         std::condition_variable cv;
         std::string             pending;
         bool                    done = false;
+        int                     rc   = 0;
+        std::string             err;
         std::atomic<bool>       client_gone{ false };
         std::thread             th;
     };
@@ -310,12 +347,27 @@ static void tts_handle_speech(const tts_backend & be, const httplib::Request & h
             st->cv.notify_all();
             return true;
         };
-        std::string synth_err;
-        be.synthesize(req, push, synth_err);
+        std::string                 synth_err;
+        int                         rc = be.synthesize(req, push, synth_err);
         std::lock_guard<std::mutex> lk(st->mu);
+        st->rc   = rc;
+        st->err  = synth_err;
         st->done = true;
         st->cv.notify_all();
     });
+
+    {
+        std::unique_lock<std::mutex> lk(st->mu);
+        st->cv.wait(lk, [&] { return st->done || !st->pending.empty(); });
+        if (st->pending.empty() && st->rc != 0) {
+            const int rc = st->rc;
+            err          = st->err;
+            lk.unlock();
+            st->th.join();
+            tts_json_error(res, tts_status_to_http(rc), "server_error", err.empty() ? "synthesis failed" : err.c_str());
+            return;
+        }
+    }
 
     res.set_header("Cache-Control", "no-cache");
     res.set_header("X-Accel-Buffering", "no");
@@ -323,10 +375,12 @@ static void tts_handle_speech(const tts_backend & be, const httplib::Request & h
         "audio/pcm",
         [st](size_t, httplib::DataSink & sink) -> bool {
             std::string chunk;
+            int         rc = 0;
             {
                 std::unique_lock<std::mutex> lk(st->mu);
                 st->cv.wait(lk, [&] { return st->done || !st->pending.empty(); });
                 chunk.swap(st->pending);
+                rc = st->rc;
             }
             if (!chunk.empty()) {
                 if (!sink.write(chunk.data(), chunk.size())) {
@@ -334,6 +388,9 @@ static void tts_handle_speech(const tts_backend & be, const httplib::Request & h
                     return false;
                 }
                 return true;
+            }
+            if (rc != 0) {
+                return false;
             }
             sink.done();
             return true;
@@ -405,7 +462,7 @@ static bool tts_parse_voice_upload(const std::string & body, tts_voice_upload & 
         yyjson_doc_free(doc);
         return false;
     }
-    up.name = yyjson_get_str(name);
+    up.name = tts_voice_name(yyjson_get_str(name));
 
     yyjson_val * ref_text = yyjson_obj_get(root, "ref_text");
     up.ref_text           = yyjson_is_str(ref_text) ? yyjson_get_str(ref_text) : "";
@@ -463,7 +520,7 @@ static void tts_handle_voice_delete(const tts_backend &      be,
         tts_json_error(res, 501, "not_implemented", "this backend has no voice registry");
         return;
     }
-    const std::string name = http_req.matches[1];
+    const std::string name = tts_voice_name(http_req.matches[1].str().c_str());
     if (!be.remove_voice(name)) {
         tts_json_error(res, 404, "not_found_error", "no registered voice with this name");
         return;
@@ -578,10 +635,10 @@ static int tts_server_run(const tts_backend & be, const server_config & cfg) {
     signal(SIGINT, tts_on_signal);
     signal(SIGTERM, tts_on_signal);
 
-    fprintf(stderr, "[Server] model %s\n", be.model_id.c_str());
-    fprintf(stderr, "[Server] listening on %s:%d\n", cfg.host.c_str(), cfg.port);
+    qt_log(QT_LOG_INFO, "[Server] model %s", be.model_id.c_str());
+    qt_log(QT_LOG_INFO, "[Server] listening on %s:%d", cfg.host.c_str(), cfg.port);
     if (!svr.listen(cfg.host.c_str(), cfg.port)) {
-        fprintf(stderr, "[Server] FATAL: cannot bind %s:%d\n", cfg.host.c_str(), cfg.port);
+        qt_log(QT_LOG_ERROR, "[Server] FATAL: cannot bind %s:%d", cfg.host.c_str(), cfg.port);
         return 1;
     }
     return 0;

@@ -30,10 +30,11 @@ struct voice_entry {
 };
 
 // Registered voices, name keyed. Every access happens under
-// g_voices_mutex; the GPU side of a registration is serialized inside
-// the ABI (qt_extract_voice_ref slips between batch frames), and the
-// synthesize lookup copies the latents out so a concurrent replace or
-// delete never frees buffers a running synthesis still reads.
+// g_voices_mutex; the backend side of a registration runs on the
+// library compute worker (qt_extract_voice_ref blocks until it lands
+// between two engine frames), and the synthesize lookup copies the
+// latents out so a concurrent replace or delete never frees buffers a
+// running synthesis still reads.
 static std::mutex                                   g_voices_mutex;
 static std::unordered_map<std::string, voice_entry> g_voices;
 
@@ -48,7 +49,7 @@ static void print_usage(const char * prog) {
             "  --alias <name>          Report this model id instead of the GGUF file name\n"
             "  --host <ip>             Listen address (default: 127.0.0.1)\n"
             "  --port <n>              Listen port (default: 8080)\n"
-            "  --lang <name>           Language label (default: auto)\n"
+            "  --lang <name>           Language label when a request omits one (default: auto)\n"
             "  --max-batch <n>         Concurrent requests batched on the GPU (default: 1)\n"
             "  --no-fa                 Disable flash attention\n"
             "  --clamp-fp16            Clamp hidden states to FP16 range\n"
@@ -98,11 +99,7 @@ int main(int argc, char ** argv) {
             max_batch = std::atoi(argv[++i]);
         } else if (!std::strcmp(arg, "--codec-chunk-dur") && i + 1 < argc) {
             codec_chunk_dur = (float) std::atof(argv[++i]);
-        } else if (!std::strcmp(arg, "--help") || !std::strcmp(arg, "-h")) {
-            print_usage(argv[0]);
-            return 0;
         } else {
-            fprintf(stderr, "[CLI] ERROR: unknown arg: %s\n", arg);
             print_usage(argv[0]);
             return 1;
         }
@@ -110,7 +107,7 @@ int main(int argc, char ** argv) {
 
     if (!talker_path || !codec_path) {
         print_usage(argv[0]);
-        return 0;
+        return 1;
     }
 
     struct qt_init_params iparams;
@@ -138,8 +135,15 @@ int main(int argc, char ** argv) {
     // Voice registry: POST /v1/audio/voices stores a cloned voice either from a
     // WAV (server side extraction through qt_extract_voice_ref) or from
     // pre-extracted .spk / .rvq payloads. Re-registering a name replaces
-    // the previous entry.
+    // the previous entry. Only base models synthesize from a voice
+    // reference, so both payloads are refused on any other model type.
     be.register_voice = [q](const tts_voice_upload & up, std::string & err) -> bool {
+        const std::string mt = qt_model_type(q);
+        if (mt != "base") {
+            err = "voice registration is only valid for base models (loaded: " + mt + ")";
+            return false;
+        }
+
         voice_entry entry;
         entry.ref      = {};
         entry.ref_text = up.ref_text;
@@ -223,7 +227,7 @@ int main(int argc, char ** argv) {
         struct qt_tts_params p;
         qt_tts_default_params(&p);
         p.text = req.input.c_str();
-        p.lang = lang.c_str();
+        p.lang = req.lang.empty() ? lang.c_str() : req.lang.c_str();
 
         // Copy the registered voice latents out under the lock: the
         // synthesis may run for seconds while another connection
@@ -266,30 +270,30 @@ int main(int argc, char ** argv) {
             p.instruct = req.instructions.c_str();
         }
 
-        // Sampling overrides ride straight into the ABI; the subtalker
-        // mirrors the talker knobs so the HTTP surface stays a single
-        // coherent set. A temperature of zero selects greedy decoding
-        // on both.
+        // Sampling overrides ride straight into the ABI, each field
+        // driving its own stack. A temperature of zero selects greedy
+        // decoding on that stack.
         p.seed = req.seed;
         if (req.max_new_tokens != -1) {
             p.max_new_tokens = req.max_new_tokens;
         }
         if (req.top_k != -1) {
-            p.top_k           = req.top_k;
-            p.subtalker_top_k = req.top_k;
+            p.top_k = req.top_k;
         }
         if (!std::isnan(req.temperature)) {
-            if (req.temperature == 0.0f) {
-                p.do_sample           = false;
-                p.subtalker_do_sample = false;
-            } else {
-                p.temperature           = req.temperature;
-                p.subtalker_temperature = req.temperature;
-            }
+            p.temperature = req.temperature;
         }
         if (!std::isnan(req.top_p)) {
-            p.top_p           = req.top_p;
-            p.subtalker_top_p = req.top_p;
+            p.top_p = req.top_p;
+        }
+        if (req.subtalker_top_k != -1) {
+            p.subtalker_top_k = req.subtalker_top_k;
+        }
+        if (!std::isnan(req.subtalker_temperature)) {
+            p.subtalker_temperature = req.subtalker_temperature;
+        }
+        if (!std::isnan(req.subtalker_top_p)) {
+            p.subtalker_top_p = req.subtalker_top_p;
         }
         if (!std::isnan(req.repetition_penalty)) {
             p.repetition_penalty = req.repetition_penalty;
