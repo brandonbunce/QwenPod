@@ -122,6 +122,7 @@ def build(app):
                 u.man_text = run.man_text
                 u.man_go = run.man_go
                 u.man_mic = run.man_mic
+                u.man_mic_session = run.man_mic_session
             with gr.Tab("Speakers", id="speakers"):
                 speakers = build_speakers(app)
                 u.s_roster = speakers.s_roster
@@ -382,6 +383,10 @@ def build(app):
                          [u.man_speaker, u.man_mic],
                          [u.sb_action, u.man_mic],
                          concurrency_limit=1)
+        # Record and Stop in the recorder: whisper-server comes up for the
+        # session and goes after it has been idle.
+        u.man_mic_session.change(bound(t_run.mic_session, app), u.man_mic_session,
+                                 u.sb_action)
         u.m_mode.change(bound(t_behaviour.set_mode, app), u.m_mode, u.sb_action)
         # Same two handlers the Inputs tab uses; they take the text as an
         # argument, so a second box on this tab needs nothing else.

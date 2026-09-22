@@ -86,6 +86,12 @@ def manual_say(app, speaker, text):
     return _speak_as(app, speaker, text)
 
 
+def mic_session(app, state):
+    """The recorder opened ("on") or closed ("off")."""
+    msg = app.mic_session(str(state or "").strip() == "on")
+    return note(msg) if msg else gr.update()
+
+
 def say_from_mic(app, speaker, audio_path):
     """Transcribe an uploaded take and speak it as `speaker`, immediately.
 
@@ -131,8 +137,15 @@ def say_from_mic(app, speaker, audio_path):
         yield warn(why), gr.update(value="")
         return
 
+    # The recorder normally started the server when Record was pressed; the
+    # File button, or a session that opened faster than the server, lands
+    # here first. Starting it blocks for a few seconds, so say so.
+    if not app.whisper_alive() and app.state.settings.whisper_server:
+        yield "Starting whisper-server...", gr.update()
+        app.whisper_for_clip()
     yield "Transcribing...", gr.update()
     text, err = app.whisper.transcribe(audio_path)
+    app.clip_done()
     if err:
         app.events.add(SPEECH, f"transcription failed - {err}")
         yield warn(err), gr.update(value="")

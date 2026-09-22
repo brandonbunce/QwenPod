@@ -70,6 +70,11 @@ class DeadInternetApp:
         self.whisper = Whisper(ROOT, s.whisper_binary, s.whisper_model, s.whisper_lang)
         self.whisper.pipeline = self.pipeline
         self._whisper_proc = None
+        # On-demand whisper: one start at a time, an idle timer that stops it,
+        # and whether the recorder is currently open (the timer waits for it).
+        self._whisper_lock = threading.Lock()
+        self._whisper_idle = None
+        self._mic_session = False
         # Kept alongside the active client so the UI can list Ollama models
         # even while OpenAI is selected.
         self.ollama = OllamaClient(s.ollama_url, s.ollama_model)
@@ -210,13 +215,37 @@ class DeadInternetApp:
         except Exception:
             return False
 
+    def whisper_pids(self):
+        """PIDs of any running whisper-server, ours or inherited -- same
+        reasoning as tts_pids()."""
+        binary = os.path.join(ROOT, self.state.settings.whisper_server_binary)
+        found = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    argv = f.read().split(b"\0")
+            except OSError:
+                continue
+            if argv and argv[0].decode("utf-8", "replace") == binary:
+                found.append(int(entry))
+        return found
+
     def start_whisper_server(self):
         """Launch whisper-server if it is wanted and not already up.
 
         Non-fatal throughout: transcription falls back to spawning whisper-cli
         per clip, which is what it always did. A microphone that is slower than
         it could be beats one that reports an error.
+
+        Serialised: the recorder opening and its first clip arriving can both
+        ask for it within a second, and two launches on one port is a crash.
         """
+        with self._whisper_lock:
+            return self._start_whisper_server()
+
+    def _start_whisper_server(self):
         s = self.state.settings
         if not s.whisper_server:
             self.whisper.server_url = ""
@@ -258,6 +287,123 @@ class DeadInternetApp:
             time.sleep(0.5)
         self.whisper.server_url = ""
         return False, "whisper-server did not answer in 60s"
+
+    def stop_whisper_server(self):
+        """Stop whisper-server and hand its VRAM back. -> (ok, message)."""
+        pids = self.whisper_pids()
+        self.whisper.server_url = ""
+        self._whisper_proc = None
+        if not pids:
+            return False, "whisper-server was not running."
+        before = vram_info()
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.time() + 8
+        while time.time() < deadline and self.whisper_pids():
+            time.sleep(0.2)
+        for pid in self.whisper_pids():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.5)
+        after = vram_info()
+        freed = ""
+        if before and after:
+            freed = f", freeing {max(0.0, before[0] - after[0]):.1f} GB"
+        return True, f"Stopped whisper-server{freed}."
+
+    # ---- whisper on demand --------------------------------------------------
+    # The resident server is worth 7x on every clip but holds ~0.7 GB of the
+    # card for its life, which is a bad trade for a microphone that is used
+    # for ten minutes a day. So it starts when the recorder opens, and an idle
+    # timer stops it once the recorder has been closed for a while.
+    def boot_whisper(self):
+        """At app start: bring the server up, adopt one, or wait for Record."""
+        s = self.state.settings
+        if not s.whisper_server:
+            self.log("[boot] resident whisper is off")
+            return
+        if s.whisper_server_at_boot:
+            ok, msg = self.start_whisper_server()
+            self.log(f"[boot] {msg}")
+            return
+        if self.whisper_alive():
+            # Left running by an earlier session: use it, and let the idle
+            # timer decide when it goes, as if a session had just ended.
+            self.whisper.server_url = s.whisper_server_url
+            self._arm_whisper_idle()
+            self.log("[boot] whisper-server already running - stops after "
+                     f"{s.whisper_idle_seconds:g}s idle")
+            return
+        self.log("[boot] resident whisper starts on the first press of Record")
+
+    def mic_session(self, on):
+        """The recorder pressed Record (on) or Stop (off). -> a sentence for
+        the action line, or "" when there is nothing worth saying."""
+        self._mic_session = bool(on)
+        s = self.state.settings
+        if not s.whisper_server:
+            return ""
+        if not on:
+            self._arm_whisper_idle()
+            return ""
+        self._cancel_whisper_idle()
+        if self.whisper_alive():
+            self.whisper.server_url = s.whisper_server_url
+            return ""
+        ok, msg = self.start_whisper_server()
+        if ok:
+            return "Microphone ready: whisper-server is up for this session."
+        return f"Microphone will use whisper-cli per clip - {msg}"
+
+    def whisper_for_clip(self):
+        """A clip is about to be transcribed: make sure the server is there.
+        -> True if it had to be started (the caller may want to say so)."""
+        s = self.state.settings
+        if not s.whisper_server or self.whisper_alive():
+            return False
+        self._cancel_whisper_idle()
+        self.start_whisper_server()
+        return True
+
+    def clip_done(self):
+        """A clip was transcribed outside a Record session (the File button):
+        the idle clock starts now, since no Stop press will start it."""
+        if not self._mic_session:
+            self._arm_whisper_idle()
+
+    def _cancel_whisper_idle(self):
+        t, self._whisper_idle = self._whisper_idle, None
+        if t:
+            t.cancel()
+
+    def _arm_whisper_idle(self):
+        self._cancel_whisper_idle()
+        secs = self.state.settings.whisper_idle_seconds
+        if secs <= 0:
+            return
+        t = threading.Timer(secs, self._whisper_idle_stop)
+        t.daemon = True
+        t.name = "whisper-idle"
+        self._whisper_idle = t
+        t.start()
+
+    def _whisper_idle_stop(self):
+        self._whisper_idle = None
+        if self._mic_session:
+            # Stop was never pressed. Try again later rather than pulling
+            # the server out from under an open recorder.
+            self._arm_whisper_idle()
+            return
+        ok, msg = self.stop_whisper_server()
+        if ok:
+            secs = self.state.settings.whisper_idle_seconds
+            self.log(f"[whisper] {msg} No clip for {secs:g}s; it starts again "
+                     "on the next press of Record.")
 
     @staticmethod
     def http_get(url, timeout):
@@ -493,11 +639,10 @@ class DeadInternetApp:
         except Exception as e:
             self.log(f"[boot] tts-server startup failed: {e}")
         # After tts-server, deliberately: it is the one that must get the card
-        # while it is empty, and whisper's ~0.45 GB is small enough to land
+        # while it is empty, and whisper's ~0.7 GB is small enough to land
         # afterwards without evicting anything.
         try:
-            ok, msg = self.start_whisper_server()
-            self.log(f"[boot] {msg}")
+            self.boot_whisper()
         except Exception as e:
             self.log(f"[boot] whisper-server startup failed: {e}")
 

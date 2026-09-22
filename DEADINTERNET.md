@@ -429,9 +429,15 @@ a resident `whisper-server` and the compute gap appears:
 So residency is what makes the GPU matter, and the GPU is what makes residency
 worth much. Either alone is nearly nothing; together they are 7x.
 
-It costs about **0.45 GB of VRAM** held for the process's life, so the app
-starts it *after* tts-server -- tts-server must get the card while it is empty,
-and evicted TTS buffers never recover. Measured after: TTS unchanged.
+It costs about **0.7 GB of VRAM** for as long as it runs, which is a bad trade
+for a microphone used ten minutes a day. So it is **started on demand**: the
+first press of **Record** brings it up (a few seconds, reported in the action
+line), and after `whisper_idle_seconds` (default 300) without a clip it is
+stopped again and the card gets the memory back. A clip that arrives before it
+is up -- the *File* button, or a very quick first sentence -- starts it and
+waits. `whisper_server_at_boot: true` is the old behaviour, up with the app and
+kept; `whisper_idle_seconds: 0` keeps it once started. When it does start with
+the app it goes *after* tts-server, which must get the card while it is empty.
 
 Turn it off with `whisper_server: false` and transcription falls straight back
 to spawning `whisper-cli`, which is what it always did. The same fallback fires

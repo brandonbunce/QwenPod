@@ -425,6 +425,10 @@ def build_run(app, init_names):
             # guaranteed to exist in the DOM for the JS to write to.
             man_mic = gr.Textbox(elem_id="qp-mic-path", label=None,
                                  container=False, elem_classes=["qp-hidden"])
+            # "on" while Record is down, "off" after Stop: what starts
+            # whisper-server for a session and lets it stop afterwards.
+            man_mic_session = gr.Textbox(elem_id="qp-mic-session", label=None,
+                                         container=False, elem_classes=["qp-hidden"])
 
     return RunPanel(
         m_mode=m_mode,
@@ -445,6 +449,7 @@ def build_run(app, init_names):
         man_text=man_text,
         man_go=man_go,
         man_mic=man_mic,
+        man_mic_session=man_mic_session,
     )
 
 

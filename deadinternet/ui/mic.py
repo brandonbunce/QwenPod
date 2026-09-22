@@ -101,14 +101,23 @@ MIC_JS = r"""
   // Setting a Svelte-bound input needs the native value setter plus a bubbling
   // 'input' event, or the framework never sees the change.
   const sink = () => document.querySelector('#qp-mic-path textarea');
+  const setField = (el, value) => {
+    const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
   const handOff = (path) => {
     const el = sink();
     if (!el) { say('Internal error: mic path field missing.'); return false; }
-    const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(el, path);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    setField(el, path);
     return true;
+  };
+  // A second seam: Record and Stop tell the server the session is open or
+  // closed, so whisper-server can be started for it and stopped after it.
+  const session = (on) => {
+    const el = document.querySelector('#qp-mic-session textarea');
+    if (el) setField(el, on ? 'on' : 'off');
   };
 
   // The handler clears the textbox on every exit path, so an empty field means
@@ -250,6 +259,7 @@ MIC_JS = r"""
     btn.textContent = 'Record';
     btn.classList.remove('qp-recording');
     rec = null;
+    session(false);
     render();
   };
 
@@ -371,6 +381,7 @@ MIC_JS = r"""
       await listDevices();          // labels only populate post-permission
       stopping = false;
       recState = 'rec';
+      session(true);
       btn.textContent = 'Stop';
       btn.classList.add('qp-recording');
       const dev = sel.options[sel.selectedIndex];
@@ -390,6 +401,7 @@ MIC_JS = r"""
       }
     } catch (e) {
       recState = 'idle';
+      session(false);
       say('Microphone error: ' + e.message);
     }
   };

@@ -105,6 +105,7 @@ class RunPanel:
     man_text: Any
     man_go: Any
     man_mic: Any
+    man_mic_session: Any
 
 
 @dataclass(frozen=True)

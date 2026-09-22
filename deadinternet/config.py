@@ -488,6 +488,12 @@ class Settings:
     whisper_server: bool = True
     whisper_server_binary: str = "whisper.cpp/build/bin/whisper-server"
     whisper_server_url: str = "http://127.0.0.1:8082"
+    # The resident server is started on demand -- the first press of Record --
+    # and stopped after this long without a clip, so its VRAM is only held
+    # while the microphone is in use. 0 keeps it up once started. at_boot is
+    # the old behaviour: start it with the app and keep it.
+    whisper_server_at_boot: bool = False
+    whisper_idle_seconds: float = 300.0
     mode: str = MODE_PODCAST
     topic: str = "whatever comes to mind"
     # Who pinned the current topic, and where. Empty when the topic was typed
