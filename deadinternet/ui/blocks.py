@@ -138,6 +138,8 @@ def build(app):
                 u.s_stim_pct = speakers.s_stim_pct
                 u.s_save = speakers.s_save
                 u.s_delete = speakers.s_delete
+                u.s_export = speakers.s_export
+                u.s_export_file = speakers.s_export_file
                 u.s_handle = speakers.s_handle
                 u.s_mine = speakers.s_mine
             with gr.Tab("Inputs"):
@@ -327,6 +329,8 @@ def build(app):
         u.s_sharpen.click(bound(t_speakers.sharpen_persona, app),
                           [u.s_name, u.s_persona], [u.s_persona, u.sb_action])
         u.s_delete.click(bound(t_speakers.delete_speaker, app), u.s_roster, sel_out + [u.sb_action])
+        u.s_export.click(bound(t_speakers.export_voices, app), None,
+                         [u.s_export_file, u.sb_action], concurrency_limit=1)
         u.s_reset_dynamic.click(bound(t_speakers.reset_dynamic, app), u.s_roster,
                                 [u.s_dynamic, u.sb_action])
         u.s_mine.click(bound(t_speakers.build_persona, app), [u.s_handle, u.s_name],

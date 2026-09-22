@@ -883,6 +883,31 @@ that instruction is the thing to strengthen.
 Nothing is saved until you press **Save speaker**. The name field is filled in
 only when it was empty, so it cannot silently retarget an existing speaker.
 
+### Downloading the voices
+
+**Download all voices (.zip)** at the bottom of the editor writes one zip — a
+`qwen-voices-export/` folder with a pair of files per speaker that has a
+reference clip:
+
+| | |
+| --- | --- |
+| `<name>.wav` | the clip as tts-server hears it: mono, 16-bit, 24 kHz |
+| `<name>.txt` | that speaker's `ref_text`, byte for byte; empty file for a voice-only clone |
+| `manifest.json` | `<name>` to the real speaker name and the clip length |
+
+`<name>` is the speaker name lowercased down to `a-z 0-9 _ -`, with `_2` on a
+collision. The audio is not a fresh conversion of the file in `voices/`: it is
+built from the same bytes `TTSClient.register` posts and then put through what
+tts-server does on receipt, so a clip already at 24 kHz comes back
+sample-for-sample identical to what the cloner was given. Neither side trims,
+so neither does the export.
+
+Clips and transcripts only — no personas, transcripts of conversations,
+settings or logs. The zip is built in a temp folder and never written into the
+repo, but note that **anyone who can open the UI can download every voice**,
+and gradio keeps its own copy of each served file under `/tmp/gradio` until it
+is cleaned up.
+
 ### Vocal stims
 
 Per-speaker catchphrases. **Vocal stims** takes one phrase per line (commas

@@ -15,6 +15,19 @@ import soundfile as sf
 from .pipeline import NULL_PIPELINE, TTS
 
 
+def upload_wav(wav_path: str) -> bytes:
+    """The exact bytes register() sends for a reference clip.
+
+    Mono 16-bit WAV at the clip's own rate; the server resamples to 24 kHz.
+    A function of its own so voiceexport.py reproduces what the server heard
+    from the same code, rather than from a copy that could drift.
+    """
+    data, sr = sf.read(wav_path, always_2d=True)
+    buf = io.BytesIO()
+    sf.write(buf, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
 class TTSClient:
     def __init__(self, base_url: str, timeout: int = 600):
         self.base_url = base_url.rstrip("/")
@@ -57,14 +70,9 @@ class TTSClient:
         if not wav_path or not os.path.exists(wav_path):
             return False, f"reference clip missing: {wav_path}"
 
-        # Server decodes at 24 kHz mono; normalise whatever we were given.
-        data, sr = sf.read(wav_path, always_2d=True)
-        buf = io.BytesIO()
-        sf.write(buf, data.mean(axis=1), sr, format="WAV", subtype="PCM_16")
-
         payload = {
             "name": name,
-            "wav_b64": base64.b64encode(buf.getvalue()).decode(),
+            "wav_b64": base64.b64encode(upload_wav(wav_path)).decode(),
             "ref_text": ref_text or "",
         }
         try:

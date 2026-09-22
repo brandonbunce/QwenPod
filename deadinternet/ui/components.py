@@ -121,6 +121,8 @@ class SpeakersPanel:
     s_stim_pct: Any
     s_save: Any
     s_delete: Any
+    s_export: Any
+    s_export_file: Any
     s_handle: Any
     s_mine: Any
 

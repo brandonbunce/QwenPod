@@ -506,6 +506,17 @@ def build_speakers(app):
             with gr.Row():
                 s_save = gr.Button("Save speaker", variant="primary")
                 s_delete = gr.Button("Delete")
+            with gr.Group():
+                gr.Markdown(
+                    "**Export every voice.** One zip with each speaker's "
+                    "reference clip as the server hears it (mono, 16-bit, "
+                    "24 kHz), their transcript, and a manifest. Clips and "
+                    "transcripts only - no personas, settings or logs.")
+                s_export = gr.Button("Download all voices (.zip)", size="sm")
+                # Hidden until there is something in it: an empty file box
+                # reads as a drop target, which this is not.
+                s_export_file = gr.File(label="Voice export", visible=False,
+                                        interactive=False)
 
     return SpeakersPanel(
         s_roster=s_roster,
@@ -524,6 +535,8 @@ def build_speakers(app):
         s_stim_pct=s_stim_pct,
         s_save=s_save,
         s_delete=s_delete,
+        s_export=s_export,
+        s_export_file=s_export_file,
         s_handle=s_handle,
         s_mine=s_mine,
     )

@@ -1,5 +1,7 @@
 """Speakers tab: edit the roster, and write a persona from real chat history."""
 import os
+import shutil
+import tempfile
 import time
 
 import gradio as gr
@@ -7,6 +9,7 @@ import soundfile as sf
 
 from ...config import PERSONA_SAMPLES, Speaker, VOICES_DIR
 from ...events import VOICE
+from ... import voiceexport
 from ..feed import MINE_POLL
 from ..feedback import note, warn
 from ..selectors import (NEW, roster_choices, selector_updates,
@@ -162,6 +165,40 @@ def delete_speaker(app, sel):
     if os.path.exists(stored):
         os.remove(stored)
     return (*selector_updates(app, sel=NEW), note(f"Deleted '{sel}'."))
+
+
+# The temp folder holding the last zip handed out. Replaced on the next
+# export rather than left for the OS: each one is a copy of every voice.
+_last_export = None
+
+
+def export_voices(app):
+    """Zip every reference clip and transcript for the browser to download.
+
+    Written to a temp folder, never into the repo. Gradio copies the returned
+    file into its own cache before serving it, so the temp copy only has to
+    outlive this call; the previous one is removed on the next export.
+    """
+    global _last_export
+    speakers = app.state.restorable()
+    if not speakers:
+        return gr.update(), warn("No speakers with a reference clip - nothing "
+                                 "to export.")
+    if _last_export:
+        shutil.rmtree(_last_export, ignore_errors=True)
+    _last_export = tempfile.mkdtemp(prefix="qwen-voices-export-")
+    path = os.path.join(_last_export, f"{voiceexport.FOLDER}.zip")
+    try:
+        manifest, warnings = voiceexport.export_zip(speakers, path)
+    except Exception as e:
+        return gr.update(), warn(f"Export failed - {e}")
+
+    app.events.add(VOICE, f"exported {len(manifest)} voices for download")
+    msg = f"Exported **{len(manifest)} of {len(speakers)}** voices."
+    if warnings:
+        return (gr.update(value=path, visible=True),
+                warn(msg + " Skipped: " + "; ".join(warnings)))
+    return gr.update(value=path, visible=True), note(msg)
 
 
 def build_persona(app, handle, current_name):
