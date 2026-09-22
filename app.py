@@ -296,6 +296,12 @@ class DeadInternetApp:
 
     def stop_tts_server(self, timeout=15.0):
         """Stop tts-server and wait for it to actually let go of the card."""
+        s = self.state.settings
+        if not is_local_tts(s.tts_url):
+            # Same guard as restart: this only ever acts on this machine, and
+            # stopping a server nothing is speaking through helps nobody.
+            return False, (f"speech engine is set to {s.tts_url} - this "
+                           "button is for tts-server on this machine.")
         pids = self.tts_pids()
         if not pids:
             self._tts_proc = None

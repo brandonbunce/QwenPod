@@ -6,6 +6,7 @@ point of this output is that it has nothing to do with Discord.
 import gradio as gr
 
 from ... import audiodev
+from ...config import is_local_tts
 from ...events import VOICE
 from ..feedback import note, warn
 
@@ -96,20 +97,53 @@ def restart_tts(app, device):
     return note(msg) if ok else warn(msg)
 
 
+def local_visible(app):
+    """Are the local-only controls on the page?
+
+    The Backend/Restart/Stop box on Outputs and the whole Testing tab only
+    make sense against a tts-server on this machine. One answer, asked by the
+    builder at page load and by set_tts_server when the answer changes, so
+    the two can never disagree.
+    """
+    return is_local_tts(app.state.settings.tts_url)
+
+
+def remote_note(url):
+    """The line that stands in for the hidden controls while speech is
+    pointed elsewhere."""
+    return (f"Speech comes from `{url}`. Backend, Restart and Stop act on "
+            "tts-server on this machine and are hidden while it is not in use.")
+
+
 def set_tts_server(app, where, url):
     """Point speech at this machine or at a remote tts-server.
+
+    -> (remote address box, action line, local-only box, remote note,
+        Testing tab, top-level tabs).
 
     Leaves the box holding the remote address even after switching back to
     this machine: it is the remembered one, and blanking it would mean typing
     the address again to switch back.
+
+    The last four show or hide what only works locally. Hiding a tab that is
+    selected leaves gradio with nothing selected, so the tab strip is always
+    told to stay on Outputs -- a no-op when it already is, which it is
+    whenever this button was pressed.
     """
     try:
         ok, msg = app.set_tts_server(where, url)
     except Exception as e:
-        return gr.update(), warn(f"Could not switch speech engine - {e}")
+        return (gr.update(), warn(f"Could not switch speech engine - {e}"),
+                gr.update(), gr.update(), gr.update(), gr.update())
     app.events.add(VOICE, f"speech engine: {where} - {msg}")
     box = gr.update(value=app.state.settings.tts_remote_url)
-    return box, (note(msg) if ok else warn(msg))
+    local = local_visible(app)
+    return (box, (note(msg) if ok else warn(msg)),
+            gr.update(visible=local),
+            gr.update(visible=not local,
+                      value=remote_note(app.state.settings.tts_url)),
+            gr.update(visible=local),
+            gr.update(selected="outputs"))
 
 
 def stop_tts(app):

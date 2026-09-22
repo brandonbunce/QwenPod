@@ -18,6 +18,8 @@ from .components import (BehaviourPanel, DiagnosticsPanel, GeneratePanel,
 from .feedback import tpl_vars
 from .help import help
 from .tabs.behaviour import music_report as t_behaviour_music
+from .tabs.local import local_visible as t_local_visible
+from .tabs.local import remote_note as t_remote_note_text
 from .mic import MIC_HTML
 from .selectors import NEW, roster_choices, voice_choices
 from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
@@ -25,52 +27,6 @@ from ..config import (HELP, MODES, PERSONA_SAMPLES, PERSONA_YEARS,
                       TTS_WHERE, is_local_tts)
 from ..comedy import DEFAULT_MOVES
 from ..llm import DEFAULT_AD_PROMPT, PROVIDERS
-
-# Why a restart button exists at all. The state it recovers from is invisible
-# and permanent, so "it sounds sluggish" is the only symptom and a terminal was
-# the only cure.
-# The three controls below the radio drive the tts-server on this machine, and
-# say nothing about one somewhere else -- which is not obvious from looking at
-# them, so it is written down next to them.
-REMOTE_HINT = (
-    "**Remote** speaks through a tts-server on another machine, which is worth "
-    "having when this card is busy or the model will not fit on it. The roster "
-    "is registered against whichever server is selected - voices live in the "
-    "server's memory, so pointing at a new one re-uploads every reference clip "
-    "and that takes a minute or two.\n\n"
-    "**Backend**, **Restart** and **Stop** below only ever act on tts-server "
-    "*on this machine*, whichever server speech is coming from."
-)
-
-TTS_HINT = (
-    "**Restart it after freeing VRAM.** tts-server allocates once, at startup. "
-    "If the card was full then - a big model in Ollama, or a game - the driver "
-    "puts its buffers in host memory and speech runs about 3x slower for the "
-    "life of the process. Freeing VRAM afterwards does **not** undo it; only a "
-    "restart does. Measured: 0.16s of compute per second of audio started on an "
-    "empty card, 0.53s started full.\n\n"
-    "**CPU** runs the same binary with the GPU hidden from it - about 2.5x "
-    "slower than a healthy GPU, but it needs no VRAM at all, which is worth "
-    "having when something else needs the whole card.\n\n"
-    "**Stop** frees the card entirely - about 6.5 GB - for a game or a larger "
-    "model. Nothing can speak while it is down, and the next thing that tries "
-    "to will start it again automatically, on whichever backend is selected "
-    "above."
-)
-
-# What the virtual microphone is for. The pactl commands behind the buttons are
-# in DEADINTERNET.md for anyone who would rather run them by hand.
-MIC_HINT = (
-    "Turns this machine's output into an **input** any game or voice client "
-    f"can select. *Create* makes a virtual device; pick **{audiodev.SINK}** as "
-    f"the output device above and **{audiodev.SOURCE_DESC}** as the microphone "
-    "in the other application.\n\n"
-    "A virtual device has no speakers, so you go deaf to what you are sending. "
-    "*Monitor* echoes it to your default output as its own stream - turn it "
-    "down here or in `pavucontrol` without changing what anyone else hears. "
-    "None of this survives a reboot; press *Create* again."
-)
-
 
 def build_diagnostics(app):
     """Two columns: services and the event log on the left, the four subsystem
@@ -133,92 +89,128 @@ def build_outputs(app):
     """Where the audio goes. Two outputs, one at a time -- the director holds
     a single runtime, so each refuses to start while the other is live.
 
-    Laid out like Behaviour -- a heading per section, controls in rows, the
-    explanation underneath -- rather than grouped boxes, which gradio draws as
-    one continuous panel with nothing to tell the sections apart.
+    The two outputs are nested tabs, the same shape as the topic sources on
+    Inputs: you look at the one you are using. Below them, two closed
+    accordions hold what applies to both.
     """
-    gr.Markdown(
-        "Where the conversation is played. **One at a time:** stop or "
-        "disconnect one before starting the other."
-    )
-
-    gr.Markdown("### Discord")
-    with gr.Row():
-        d_connect = gr.Button("Connect bot", variant="primary", scale=1)
-        d_channel = gr.Dropdown(choices=[], label="Voice channel", scale=3)
-        d_join = gr.Button("Join", scale=1)
-        d_leave = gr.Button("Leave", scale=1)
-        d_disconnect = gr.Button("Disconnect", scale=1)
-    gr.Markdown("The bot must be connected **and** in a voice channel before "
-                "anything is audible. While it is connected the local output "
-                "cannot start - *Disconnect* first.\n\n" + app.discord_hint())
-
-    gr.Markdown("### This machine")
-    with gr.Row():
-        l_start = gr.Button("Start local output", variant="primary", scale=1)
-        l_sink = gr.Dropdown(
-            choices=app.local_sink_choices(),
-            value=app.state.settings.local_sink,
-            label="Output device", scale=3)
-        l_refresh = gr.Button("Refresh devices", scale=1)
-        l_stop = gr.Button("Stop", scale=1)
-    gr.Markdown("Plays out of a local sound device. No token, no bot, no "
-                "voice channel. While it is playing the bot cannot connect - "
-                "*Stop* first.")
-
-    gr.Markdown("### Virtual microphone")
-    with gr.Row():
-        v_create = gr.Button("Create", variant="primary", scale=1)
-        v_remove = gr.Button("Remove", scale=1)
-        v_mon_on = gr.Button("Monitor on", scale=1)
-        v_mon_off = gr.Button("Monitor off", scale=1)
-    v_volume = gr.Slider(
-        0, audiodev.MONITOR_MAX_VOLUME,
-        value=app.state.settings.local_monitor_volume, step=5,
-        label="Monitor volume (%)",
-        info="How loud you hear it. Only the monitor changes; anything "
-             "recording the microphone still gets the full level.")
-    v_status = gr.Markdown(audiodev.report())
-    gr.Markdown(MIC_HINT)
-
-    gr.Markdown("### Audio")
-    gr.Markdown("Applies to both outputs.")
-    with gr.Row():
-        m_norm = gr.Checkbox(value=app.state.settings.normalize_audio,
-                             label="Normalise output loudness")
-        m_dbfs = gr.Slider(-30, -12, value=app.state.settings.target_dbfs, step=0.5,
-                           label="Target loudness (dBFS RMS)")
-    with gr.Row():
-        m_cap_on = gr.Checkbox(value=app.state.settings.speech_limit_enabled,
-                               label="Hard limit on speech length")
-        m_cap_sec = gr.Slider(
-            3, 120, value=app.state.settings.max_speech_seconds, step=1,
-            label="Max seconds per utterance",
-            info="Ceiling on how long one line can hold the channel. Generation "
-                 "is capped in frames so nothing is rendered and then discarded; "
-                 "anything still over is cut with a short fade.")
-
-    gr.Markdown("### Speech engine")
     s = app.state.settings
-    remote = not is_local_tts(s.tts_url)
-    with gr.Row():
-        t_where = gr.Radio(
-            choices=TTS_WHERE, value=TTS_REMOTE if remote else TTS_HERE,
-            label="Where speech is generated", scale=2)
-        t_url = gr.Textbox(
-            value=s.tts_url if remote else s.tts_remote_url,
-            label="Remote tts-server", scale=2,
-            placeholder="http://voice.example.internal:8080",
-            info="Address only, no path. Used when Where is set to "
-                 f"'{TTS_REMOTE}'.")
-        t_use = gr.Button("Use this server", scale=1)
-    with gr.Row():
-        t_device = gr.Radio(
-            choices=TTS_DEVICES, value=s.tts_device,
-            label="Backend", scale=2)
-        t_restart = gr.Button("Restart tts-server", scale=1)
-        t_stop = gr.Button("Stop tts-server", scale=1)
-    gr.Markdown("Shared by both outputs.\n\n" + REMOTE_HINT + "\n\n" + TTS_HINT)
+    with gr.Tabs():
+        with gr.Tab("Discord"):
+            with gr.Row():
+                d_connect = gr.Button("Connect bot", variant="primary", scale=1)
+                d_channel = gr.Dropdown(
+                    choices=[], label="Voice channel", scale=3,
+                    info=help("Nothing is audible until the bot is connected "
+                              "and in a channel.",
+                              "One output at a time: while the bot is "
+                              "connected, local output cannot start. "
+                              "Disconnect first."))
+                d_join = gr.Button("Join", scale=1)
+                d_leave = gr.Button("Leave", scale=1)
+                d_disconnect = gr.Button("Disconnect", scale=1)
+            gr.Markdown(app.discord_hint(), elem_classes=["qp-note"])
+
+        with gr.Tab("This machine"):
+            with gr.Row():
+                l_start = gr.Button("Start local output", variant="primary", scale=1)
+                l_sink = gr.Dropdown(
+                    choices=app.local_sink_choices(), value=s.local_sink,
+                    label="Output device", scale=3,
+                    info=help("Plays out of a sound device here. No token, no "
+                              "bot, no voice channel.",
+                              "One output at a time: while this is playing "
+                              "the bot cannot connect. Stop first."))
+                l_refresh = gr.Button("Refresh devices", scale=1)
+                l_stop = gr.Button("Stop", scale=1)
+            with gr.Accordion("Virtual microphone", open=False):
+                with gr.Row():
+                    v_create = gr.Button("Create", variant="primary", scale=1)
+                    v_remove = gr.Button("Remove", scale=1)
+                    v_mon_on = gr.Button("Monitor on", scale=1)
+                    v_mon_off = gr.Button("Monitor off", scale=1)
+                v_volume = gr.Slider(
+                    0, audiodev.MONITOR_MAX_VOLUME, step=5,
+                    value=s.local_monitor_volume,
+                    label="Monitor volume (%)",
+                    info=help("How loud you hear it. Anything recording the "
+                              "microphone still gets the full level.",
+                              "A virtual device has no speakers, so you go "
+                              "deaf to what you are sending. Monitor echoes "
+                              "it to your default output as its own stream, "
+                              "which `pavucontrol` can also adjust. None of "
+                              "this survives a reboot; press Create again."))
+                v_status = gr.Markdown(audiodev.report(), elem_classes=["qp-note"])
+                # What the virtual microphone is for. The pactl commands
+                # behind the buttons are in DEADINTERNET.md.
+                gr.Markdown(
+                    "Turns this machine's output into an input any game or "
+                    f"voice client can select: pick **{audiodev.SINK}** as the "
+                    f"output device above and **{audiodev.SOURCE_DESC}** as "
+                    "the microphone in the other application.",
+                    elem_classes=["qp-note"])
+
+    with gr.Accordion("Loudness and length", open=False):
+        with gr.Row():
+            m_norm = gr.Checkbox(value=s.normalize_audio,
+                                 label="Normalise output loudness",
+                                 info=help("Applies to both outputs."))
+            m_dbfs = gr.Slider(-30, -12, value=s.target_dbfs, step=0.5,
+                               label="Target loudness (dBFS RMS)")
+        with gr.Row():
+            m_cap_on = gr.Checkbox(value=s.speech_limit_enabled,
+                                   label="Hard limit on speech length")
+            m_cap_sec = gr.Slider(
+                3, 120, value=s.max_speech_seconds, step=1,
+                label="Max seconds per utterance",
+                info=help("Ceiling on how long one line can hold the channel.",
+                          "Generation is capped in frames so nothing is "
+                          "rendered and then discarded; anything still over "
+                          "is cut with a short fade."))
+
+    with gr.Accordion("Speech engine", open=False):
+        remote = not is_local_tts(s.tts_url)
+        with gr.Row():
+            t_where = gr.Radio(
+                choices=TTS_WHERE, value=TTS_REMOTE if remote else TTS_HERE,
+                label="Where speech is generated", scale=2,
+                info=help("Shared by both outputs.",
+                          "Remote speaks through a tts-server on another "
+                          "machine, worth having when this card is busy or "
+                          "the model will not fit on it. Voices live in the "
+                          "server's memory, so pointing at a new one "
+                          "re-uploads every reference clip, which takes a "
+                          "minute or two. A remote server's voices are never "
+                          "changed from here."))
+            t_url = gr.Textbox(
+                value=s.tts_url if remote else s.tts_remote_url,
+                label="Remote tts-server", scale=2,
+                placeholder="http://voice.example.internal:8080",
+                info=help("Address only, no path.",
+                          f"Used when Where is set to '{TTS_REMOTE}'."))
+            t_use = gr.Button("Use this server", scale=1)
+        # The three controls below drive tts-server on THIS machine and say
+        # nothing about one somewhere else, so while speech comes from
+        # elsewhere they are off the page and one line says why. Column, not
+        # Group: it is a visibility container, not a box.
+        local = t_local_visible(app)
+        with gr.Column(visible=local) as t_local_box:
+            with gr.Row():
+                t_device = gr.Radio(
+                    choices=TTS_DEVICES, value=s.tts_device,
+                    label="Backend", scale=2,
+                    info=help("gpu is faster; cpu needs no VRAM.",
+                              "tts-server allocates once, at startup. One "
+                              "that started on a full card runs about 3x "
+                              "slower for the rest of its life, and freeing "
+                              "VRAM afterwards does not undo it: Restart "
+                              "does. Stop frees the card entirely, about "
+                              "6.5 GB, and the next thing that needs speech "
+                              "starts it again. See *VRAM* in "
+                              "DEADINTERNET.md."))
+                t_restart = gr.Button("Restart tts-server", scale=1)
+                t_stop = gr.Button("Stop tts-server", scale=1)
+        t_remote_note = gr.Markdown(t_remote_note_text(s.tts_url),
+                                    visible=not local, elem_classes=["qp-note"])
     return OutputsPanel(
         d_connect=d_connect,
         d_channel=d_channel,
@@ -245,6 +237,8 @@ def build_outputs(app):
         t_where=t_where,
         t_url=t_url,
         t_use=t_use,
+        t_local_box=t_local_box,
+        t_remote_note=t_remote_note,
     )
 
 

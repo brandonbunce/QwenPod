@@ -61,6 +61,60 @@ def test_build_blocks():
         "building the page wrote the roster file"
 
 
+def _visible(demo, comp):
+    """A component's visibility as the page will serve it."""
+    return demo.get_config_file()["components"][
+        [c["id"] for c in demo.get_config_file()["components"]].index(comp._id)
+    ]["props"].get("visible", True)
+
+
+def _local_only_handles(demo):
+    """The Testing tab and the Backend/Restart/Stop box, found by their ids
+    and class rather than by handle: build() keeps them on a private bag."""
+    tab = box = None
+    for b in demo.blocks.values():
+        if getattr(b, "id", None) == "testing" and type(b).__name__ == "Tab":
+            tab = b
+    # The box is the only Column whose visibility is set at build time.
+    cols = [b for b in demo.blocks.values()
+            if type(b).__name__ == "Column" and b.visible is False]
+    return tab, cols
+
+
+def test_testing_tab_hidden_when_remote():
+    """Everything on Testing speaks through tts-server on this machine, so the
+    tab and the Backend/Restart/Stop box leave the page while speech is
+    pointed at a remote server, and come back when it is local."""
+    from deadinternet.ui import build
+
+    app = _app()
+    app.state.settings.tts_url = "http://voice.example.internal:8080"
+    demo = build(app)
+    tab, hidden_cols = _local_only_handles(demo)
+    assert tab is not None, "no Testing tab"
+    assert _visible(demo, tab) is False, "Testing visible while remote"
+    assert hidden_cols, "local-only box not hidden while remote"
+
+    app = _app()
+    app.state.settings.tts_url = "http://127.0.0.1:8080"
+    demo = build(app)
+    tab, hidden_cols = _local_only_handles(demo)
+    assert _visible(demo, tab) is True, "Testing hidden while local"
+    assert not hidden_cols, "local-only box hidden while local"
+
+
+def test_help_split():
+    """help() joins the two halves with the separator exactly once, and a
+    tooltip-less string carries none."""
+    from deadinternet.ui.help import SEP, help
+
+    assert help("a", "b").count(SEP) == 1
+    assert help("a", "b") == "a" + SEP + "b"
+    assert SEP not in help("a")
+    assert help("", "b").startswith(SEP)
+    assert help("a", "") == "a"
+
+
 def test_roster_untouched_by_import():
     """The real roster is never the config path under test."""
     from deadinternet.config import CONFIG_PATH

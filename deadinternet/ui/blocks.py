@@ -199,6 +199,8 @@ def build(app):
                 u.t_where = outputs.t_where
                 u.t_url = outputs.t_url
                 u.t_use = outputs.t_use
+                u.t_local_box = outputs.t_local_box
+                u.t_remote_note = outputs.t_remote_note
             with gr.Tab("Behaviour", id="behaviour"):
                 behaviour = build_behaviour(app)
                 u.m_reset = behaviour.m_reset
@@ -249,7 +251,10 @@ def build(app):
                 u.m_queue_max = behaviour.m_queue_max
                 u.m_rejoin = behaviour.m_rejoin
                 u.m_pause_empty = behaviour.m_pause_empty
-            with gr.Tab("Testing", id="testing") as tab_testing:
+            # Hidden while speech comes from a remote server: everything on
+            # it speaks through tts-server on this machine.
+            with gr.Tab("Testing", id="testing",
+                        visible=t_local.local_visible(app)) as tab_testing:
                 u.tab_testing = tab_testing
                 gen = build_generate(init_voices)
                 u.g_text = gen.g_text
@@ -324,7 +329,8 @@ def build(app):
                           u.sb_action)
         u.t_stop.click(bound(t_local.stop_tts, app), None, u.sb_action)
         u.t_use.click(bound(t_local.set_tts_server, app), [u.t_where, u.t_url],
-                      [u.t_url, u.sb_action])
+                      [u.t_url, u.sb_action, u.t_local_box, u.t_remote_note,
+                       u.tab_testing, u.main_tabs])
 
         # Speakers
         u.s_roster.change(bound(t_speakers.load_speaker, app), u.s_roster,

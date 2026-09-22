@@ -58,6 +58,8 @@ class OutputsPanel:
     t_where: Any
     t_url: Any
     t_use: Any
+    t_local_box: Any
+    t_remote_note: Any
 
 
 @dataclass(frozen=True)
