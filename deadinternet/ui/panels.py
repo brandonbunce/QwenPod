@@ -333,7 +333,7 @@ def build_run(app, init_names):
             with gr.Row():
                 m_mode = gr.Radio(
                     choices=MODES, value=state.settings.mode, label="Mode",
-                    scale=3,
+                    scale=5,
                     info=help("",
                               "**podcast**: they talk among themselves; chat "
                               "is ignored. **interactive**: someone typing in "

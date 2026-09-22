@@ -518,7 +518,11 @@ def build(app):
                   [u.d_channel, u.m_rot_chans, u.sb_action])
         u.hdr_refresh.click(bound(t_discord.resync_connection, app), None,
                             [u.d_channel, u.m_rot_chans, u.sb_action])
-        demo.load(stream_status, None, outs)
+        # show_progress hidden: this stream never ends, so gradio's default
+        # would keep every fed box wearing its orange "generating" top edge
+        # for the life of the page -- eleven boxes across four tabs, all
+        # permanently "busy".
+        demo.load(stream_status, None, outs, show_progress="hidden")
         # Voice lists are read from the tts-server registry when the page is
         # built, which at startup is before the server has finished booting.
         demo.load(stream_voice_boot, None, sel_out)

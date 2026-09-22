@@ -72,8 +72,8 @@ Then open <http://127.0.0.1:7860>. The web UI is serving within a second or
 two; tts-server comes up behind it and the roster is re-registered as soon as
 it answers (roughly 30s for 23 voices). Watch the log on **Diagnostics** —
 `[tts] server up` then `[boot] restored n/n voices`. Until that lands, voice
-dropdowns are empty; **Refresh voices** on the Testing tab repairs them at
-any time.
+dropdowns are empty; **Refresh voices** on the Speakers roster row repairs
+them at any time.
 
 `run.sh` is the whole lifecycle:
 
@@ -147,8 +147,8 @@ the app cannot tell — registrations live only in the server's memory, so it
 still believes every voice is live. Two ways back:
 
 - **Start** on the Run tab launches it if port 8080 is dead, same as boot does.
-- **Refresh voices** on the Testing tab re-uploads the roster to a server that
-  came back empty.
+- **Refresh voices** on the Speakers roster row re-uploads the roster to a
+  server that came back empty.
 
 Both wait up to 120s and log to `logs/tts-server.log`. Restarting the app does both
 at once, which is why `pkill`-both-then-start-the-app now works as a recipe.
@@ -176,7 +176,10 @@ Worth knowing:
   'Bjork' on ...`) rather than failing later, mid-line.
 - **Backend (GPU/CPU), Restart and Stop only ever act on tts-server here**, and
   refuse while speech is pointed elsewhere rather than restarting a server that
-  nothing is speaking through. Autostart is skipped for the same reason.
+  nothing is speaking through. Autostart is skipped for the same reason. While
+  speech is remote those three controls and the whole **Testing** tab are off
+  the page, with one line under *Speech engine* saying so; **Use this server**
+  pointed back at this machine brings them back.
 - The clips leave this machine in the clear over HTTP unless the remote is
   HTTPS, so this belongs on a network you trust.
 
@@ -309,12 +312,17 @@ one. Decorate `.action-line.block` and flatten `.action-line.prose`.
 | Tab | What it holds |
 | --- | --- |
 | `Run` | driving it on the left — mode, Start/Stop, what's next, what's on now, and the four ways to change it; watching it on the right — who's talking, the raw model output, the transcript, and "say a line as" (typed **or** spoken) |
-| `Speakers` | the roster as a strip across the top (arrows step through it), editor in two columns below |
+| `Speakers` | the roster as a strip across the top (arrows step through it; Refresh voices and Export all sit on the same row), editor in two columns below; stims and persona-building fold away |
 | `Inputs` | where topics come from — the topic itself and rotation rules on the left, the weighted sources on the right |
-| `Outputs` | where the audio goes — Discord, or this machine's own sound card. One at a time |
-| `Behaviour` | LLM backend, conversation tuning, spoken templates |
-| `Testing` | speak arbitrary text in a chosen voice, with the raw sampling knobs |
+| `Outputs` | where the audio goes — Discord or this machine's own sound card as two tabs, one at a time; loudness and the speech engine (local or remote tts-server) underneath |
+| `Behaviour` | LLM backend open; conversation tuning, comedy, between-segment work, connection rules and spoken templates as closed sections |
+| `Testing` | speak arbitrary text in a chosen voice, with the raw sampling knobs. Hidden while speech comes from a remote server |
 | `Diagnostics` | service status and the event log on the left, subsystem reports on the right |
+
+The rules the page is drawn by — one help mechanism (a short line under the
+label, a `?` for the rest), sections as accordions with only the tab's job
+open, no unbounded lists, controls hidden rather than disabled when the
+configuration makes them meaningless — are in `docs/UI-GUIDELINES.md`.
 
 Two conventions worth knowing:
 
@@ -522,7 +530,7 @@ audio device instead of into a voice channel. No token, no bot, no server. The
 obvious use is a **virtual microphone**, which makes the cast an input device
 every game and voice client on the box can select.
 
-The **Virtual microphone** section on Outputs makes one. *Create* runs these
+The **Virtual microphone** accordion under *This machine* on Outputs makes one. *Create* runs these
 two commands (only the half that is missing, so it is safe to press twice):
 
 ```bash
@@ -933,7 +941,7 @@ upload one.
 
 ### Downloading the voices
 
-**Download all voices (.zip)** at the bottom of the editor writes one zip — a
+**Export all (.zip)** on the Speakers roster row writes one zip — a
 `qwen-voices-export/` folder with a pair of files per speaker that has a
 reference clip:
 
