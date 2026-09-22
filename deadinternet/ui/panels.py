@@ -314,65 +314,69 @@ def build_header(app):
 def build_run(app, init_names):
     """Two columns: driving the show on the left, watching it on the right.
 
-    Left runs top-down in the order you actually use it: pick a mode, start it,
-    see what is coming, see what is on now, then the four ways to change it.
-    Right is the things you read -- who is in, what they said -- with the one
-    control that interrupts them at the bottom.
+    Left runs top-down in the order you actually use it: pick a mode and
+    start it, see what is on now, what is coming, then the ways to change it.
+    Right is the things you read -- who is in, what the pipeline is doing,
+    what the model emitted, what was said -- with the one control that
+    interrupts them at the bottom.
 
-    Start/Stop used to span both columns above everything. They belong with
-    Mode: choosing how it runs and making it run are one decision, and putting
-    them in the left column stops the top of the tab being a row of four
-    buttons that do unrelated things.
+    The topic is the one thing drawn large: it is what the show is about
+    right now, and the question you have when you glance at this page.
     """
     state = app.state
     with gr.Row(equal_height=False):
         with gr.Column(scale=1):
-            m_mode = gr.Radio(
-                choices=MODES, value=state.settings.mode, label="Mode",
-                info="podcast - bots talk among themselves, chat ignored. "
-                     "interactive - someone typing in the server interrupts "
-                     "and a router picks who answers. "
-                     "manual - nothing automatic; you pick a speaker and a line.")
             with gr.Row():
-                r_start = gr.Button("Start", variant="primary", scale=1)
-                r_stop = gr.Button("Stop", scale=1)
+                m_mode = gr.Radio(
+                    choices=MODES, value=state.settings.mode, label="Mode",
+                    scale=3,
+                    info=help("",
+                              "**podcast**: they talk among themselves; chat "
+                              "is ignored. **interactive**: someone typing in "
+                              "the server interrupts, and a router picks who "
+                              "answers. **manual**: nothing automatic; you "
+                              "pick a speaker and a line."))
+                # min_width below gradio's 160px default, or the two buttons
+                # claim 320px of the column and the radio wraps to two rows.
+                r_start = gr.Button("Start", variant="primary", scale=1, min_width=90)
+                r_stop = gr.Button("Stop", scale=1, min_width=90)
 
-            gr.Markdown("**Up next**")
-            run_queue = gr.Markdown(
-                "_(no queue yet)_", height=150, container=True,
-                elem_classes=["queue-box"])
-
-            gr.Markdown("**Current topic**")
             run_topic = gr.Markdown(
                 f"{state.settings.topic}", height=110, container=True,
                 elem_classes=["topic-box"])
+
+            gr.Markdown("**Up next**")
+            run_queue = gr.Markdown(
+                "_(no queue yet)_", height=110, container=True,
+                elem_classes=["queue-box"])
 
             # A second way into switch_to_typed/queue_typed, so a topic can be
             # injected without leaving the tab you are watching. Its own box
             # rather than a mirror of the one on Inputs: two components bound
             # to one setting would fight each other on every feed tick.
             run_inject = gr.Textbox(
-                label="Insert a topic", lines=2,
-                placeholder="something for them to talk about")
-            # Labelled by what they act on, not by when. "Switch to this now"
-            # next to "Switch topic now" was two buttons a word apart that did
-            # different things -- one uses the box above, the other takes the
-            # next thing off the queue.
-            run_inject_now = gr.Button("Switch to typed topic now",
-                                       variant="primary")
-            r_rotate = gr.Button("Switch to queued topic now")
-            run_inject_queue = gr.Button("Queue typed topic")
-            r_clear = gr.Button("Clear LLM context")
+                label="Change the topic", lines=2,
+                placeholder="something for them to talk about",
+                info=help("Switch now uses this box; Switch to queued takes "
+                          "the next thing off the queue."))
+            with gr.Row():
+                run_inject_now = gr.Button("Switch now", variant="primary")
+                run_inject_queue = gr.Button("Queue it")
+            with gr.Row():
+                r_rotate = gr.Button("Switch to queued topic now", size="sm")
+                r_clear = gr.Button("Clear LLM context", size="sm")
 
         with gr.Column(scale=1):
             # Enabling/disabling a speaker is the most common mid-conversation
             # change, so it lives here rather than one per speaker on another
-            # tab.
+            # tab. The same three-row sideways strip as the Speakers roster:
+            # forty names as a wrapped list was the tallest thing on the page.
             r_enabled = gr.CheckboxGroup(
                 choices=[s.name for s in state.restorable()],
                 value=[s.name for s in state.active()],
-                label="Who's talking",
-                info="Tick to let someone join the conversation. Saves immediately.")
+                label="Who's talking", elem_classes=["roster-bar"],
+                info=help("", "Tick to let someone join the conversation. "
+                              "Saves immediately."))
 
             # What each part of the pipeline is doing, above what it
             # produced. HTML rather than Markdown: it is a row of state chips,
@@ -382,22 +386,25 @@ def build_run(app, init_names):
             # What the model is emitting, above what it actually said.
             # A Textbox, not Markdown: this is unfiltered output, and a stray
             # backtick or hash in it must render as itself rather than
-            # rearranging the page.
-            gr.Markdown("**Raw model output**")
-            r_raw = gr.Textbox(
-                value="", placeholder="(nothing yet)",
-                lines=8, max_lines=8, show_label=False,
-                interactive=False, container=False, elem_classes=["raw-box"])
+            # rearranging the page. Open by default; collapsible so the
+            # transcript can have the column when you are not debugging.
+            with gr.Accordion("Raw model output", open=True):
+                r_raw = gr.Textbox(
+                    value="", placeholder="(nothing yet)",
+                    lines=8, max_lines=8, show_label=False,
+                    interactive=False, container=False, elem_classes=["raw-box"])
 
             gr.Markdown("**Transcript**")
             r_transcript = gr.Markdown(
                 "_(nothing yet)_", height=380, container=True,
                 elem_classes=["transcript-box"])
 
-            gr.Markdown("**Say a line as** (works in any mode, jumps the queue)")
+            gr.Markdown("**Say a line as**")
             with gr.Row():
                 man_speaker = gr.Dropdown(choices=init_names, label="Speaker", scale=1)
-                man_text = gr.Textbox(label="Say this", scale=3)
+                man_text = gr.Textbox(
+                    label="Say this", scale=3,
+                    info=help("", "Works in any mode and jumps the queue."))
                 man_go = gr.Button("Say", scale=1, variant="primary")
             # Speak instead of typing. Transcribed by whisper.cpp on the CPU and
             # said straight away -- there is no review step, so what Whisper
@@ -406,6 +413,8 @@ def build_run(app, init_names):
             # Nothing here decodes the clip in the browser, so a long take
             # cannot freeze the page, and the input device is chosen
             # explicitly instead of inheriting whatever Chrome defaults to.
+            # It stays outside any accordion: its JS finds #qp-mic once, at
+            # load, and a closed accordion's children are not in the DOM.
             gr.HTML(MIC_HTML)
             # The seam back into gradio. Carries the uploaded file's server
             # path; hidden by CSS rather than visible=False so the textarea is

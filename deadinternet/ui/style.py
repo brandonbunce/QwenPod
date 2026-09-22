@@ -28,7 +28,8 @@ APP_CSS = """
   --qp-fs-sm: 0.8rem;     /* status lines, the event log */
   --qp-fs-md: 0.85rem;    /* mic controls */
   --qp-fs-lg: 0.9rem;     /* the action line and the status strip */
-  --qp-fs-xl: 1rem;       /* the topic */
+  --qp-fs-xl: 1rem;       /* body-sized emphasis */
+  --qp-fs-hero: 1.15rem;  /* the current topic, and nothing else */
   --qp-fs-brand: 1.6rem;  /* the masthead */
 
   /* Gradio's --radius-sm stays inline for anything that should match a gradio
@@ -228,7 +229,8 @@ body::-webkit-scrollbar-corner,
 body ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---- roster strip ---------------------------------------------------- */
-/* Radio options laid out as a horizontally scrolling block, three rows deep.
+/* Radio (or CheckboxGroup: the cast on Run uses the same class) options laid
+   out as a horizontally scrolling block, three rows deep.
    Gradio stacks them vertically by default, which turned a long roster into
    the tallest thing on the page; one row instead meant a 34-name roster was
    several screens wide and you scrolled for a while to reach the end.
@@ -270,7 +272,15 @@ body ::-webkit-scrollbar-corner { background: transparent; }
   padding: 0.5rem 0.7rem;
 }
 .transcript-box p, .queue-box p, .status-box p, .music-box p { margin: 0.25rem 0; }
-.topic-box { font-size: var(--qp-fs-xl); }
+/* The current topic is the one thing drawn large. The amber rule on its left
+   is the action line's device: the same mark for "this is what is happening
+   now", used twice on the page and nowhere else. */
+.topic-box {
+  font-size: var(--qp-fs-hero);
+  line-height: 1.35;
+  border-left: 3px solid var(--color-accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
 
 /* ---- microphone ------------------------------------------------------ */
 /* The hidden seam: the recorder writes an uploaded file's server path here and
