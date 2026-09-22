@@ -29,14 +29,18 @@ voices/
 # Ad-break background music -- uploaded audio, same class as voices/
 music/
 
-# Transcripts and prompts of live sessions
-# The glob matters: both of these roll to a .1, and app.log carries every
-# spoken line -- the transcript of a live session, which is exactly the thing
-# that must never reach a public fork.
+# Transcripts and prompts of live sessions. logs/app.log carries every spoken
+# line -- the transcript of a live session, which is exactly the thing that
+# must never reach a public fork. The whole folder is ignored rather than a
+# glob per file: rollovers, run.sh's console capture and anything added later
+# are all covered without having to remember to add them.
+logs/
+# Where these lived before logs/ existed. Kept ignored because an app or
+# tts-server started before the move keeps writing to the old path until it
+# is restarted.
 app.log*
 tts-server.log*
 whisper-server.log*
-# run.sh -d sends stdout/stderr here: tracebacks from before logging is up
 app-console.log*
 
 # Local environment

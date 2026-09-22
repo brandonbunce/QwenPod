@@ -85,14 +85,29 @@ VOICES_DIR = os.path.join(ROOT, "voices")
 # Background beds for the ad break. Uploaded audio is user content, same class
 # as voices/ -- gitignored, never committed.
 MUSIC_DIR = os.path.join(ROOT, "music")
+# Every log the app and its servers write, in one place. Gitignored as a
+# folder: app.log carries transcripts and personas, and one ignored directory
+# is harder to leak past than four filename globs that each have to remember
+# their own .1 rollover.
+LOGS_DIR = os.path.join(ROOT, "logs")
 # Where the app writes its own log. It used to only print to stdout, so a run
 # started from a terminal left no record at all -- which is exactly the run you
-# need afterwards. Gitignored: it carries transcripts and personas.
-LOG_PATH = os.path.join(ROOT, "app.log")
+# need afterwards.
+LOG_PATH = os.path.join(LOGS_DIR, "app.log")
+TTS_LOG_PATH = os.path.join(LOGS_DIR, "tts-server.log")
+WHISPER_LOG_PATH = os.path.join(LOGS_DIR, "whisper-server.log")
 # Roll over past this. An overnight run is well under a megabyte, but nothing
 # was trimming it and a log that eats the disk is its own outage.
 LOG_MAX_BYTES = 8 * 1024 * 1024
 MUSIC_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".opus", ".aac")
+
+
+def logs_dir() -> str:
+    """LOGS_DIR, created if it is not there. Called at every write site rather
+    than on import: importing config must not make directories in the repo,
+    and the folder can be deleted under a running app."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    return LOGS_DIR
 
 
 def music_tracks():

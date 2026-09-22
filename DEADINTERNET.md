@@ -82,7 +82,7 @@ any time.
 | `./run.sh` | run in this terminal |
 | `./run.sh -d` | detached — survives closing the terminal |
 | `./run.sh status` | app, tts-server (and its backend), whisper-server, VRAM |
-| `./run.sh logs` | follow `app.log` |
+| `./run.sh logs` | follow `logs/app.log` |
 | `./run.sh restart` | stop and start detached |
 | `./run.sh stop` | stop the app, **leave tts-server running** |
 | `./run.sh stop --all` | stop tts-server and whisper-server too |
@@ -93,16 +93,19 @@ Two defaults are deliberate. **`stop` leaves tts-server alone**, because a
 server that allocated on an empty card is the fast one and every app restart
 would otherwise gamble it — see *VRAM* above. `--fresh` is the opposite move,
 for when you want it reallocated properly. And **detached mode does not
-redirect into `app.log`**: the app writes that file itself *and* prints each
-line, so the `>> app.log` recipe this section used to give duplicated every
-entry. Console output goes to `app-console.log`, which only matters when
-something dies before logging is up.
+redirect into `logs/app.log`**: the app writes that file itself *and* prints
+each line, so the `>> app.log` recipe this section used to give duplicated
+every entry. Console output goes to `logs/app-console.log`, which only matters
+when something dies before logging is up.
 
 It finds running processes through `/proc` (argv and working directory), not a
 pidfile, so it sees an app however it was started — and cannot match itself,
 which `pkill -f app.py` does.
 
-**The app writes `app.log` itself**, timestamped, rolling over at 8 MB.
+**The app writes `logs/app.log` itself**, timestamped, rolling over at 8 MB.
+Everything written by the app and the servers it starts lives in `logs/` —
+`app.log`, `app-console.log`, `tts-server.log`, `whisper-server.log` and their
+`.1` rollovers. The folder is gitignored whole.
 
 Startup skips the launch if port 8080 already answers, so an app restart never
 stacks a second server on the card — and never disturbs a healthy one. Pass
@@ -112,7 +115,7 @@ voices against a server that is already up).
 To run tts-server yourself instead:
 
 ```bash
-cd ~/Documents/qwentts.cpp && nohup ./build/tts-server --model models/qwen-talker-1.7b-base-Q8_0.gguf --codec models/qwen-tokenizer-12hz-F32.gguf --host 127.0.0.1 --port 8080 --lang English >> tts-server.log 2>&1 & disown
+cd ~/Documents/qwentts.cpp && nohup ./build/tts-server --model models/qwen-talker-1.7b-base-Q8_0.gguf --codec models/qwen-tokenizer-12hz-F32.gguf --host 127.0.0.1 --port 8080 --lang English >> logs/tts-server.log 2>&1 & disown
 ```
 
 Checking and stopping:
@@ -147,7 +150,7 @@ still believes every voice is live. Two ways back:
 - **Refresh voices** on the Testing tab re-uploads the roster to a server that
   came back empty.
 
-Both wait up to 120s and log to `tts-server.log`. Restarting the app does both
+Both wait up to 120s and log to `logs/tts-server.log`. Restarting the app does both
 at once, which is why `pkill`-both-then-start-the-app now works as a recipe.
 
 ---
@@ -198,7 +201,7 @@ experiment that shows the effect is starting tts-server on an empty card.
 
 ### The other half: cooperative matrix
 
-Check `tts-server.log` for the line ggml prints at startup:
+Check `logs/tts-server.log` for the line ggml prints at startup:
 
 ```
 ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1201) ... matrix cores: KHR_coopmat
@@ -409,7 +412,7 @@ The status bar says whether the director is *running*; this says what it is
 quiet. A stall looks identical from outside whether the model is thinking,
 tts-server is queued behind another request, whisper is chewing on a clip, or
 the gap between turns is simply set to three seconds — and telling those apart
-used to mean reading `app.log` afterwards.
+used to mean reading `logs/app.log` afterwards.
 
 - **A working stage counts up live.** The number is elapsed time on the call in
   flight, not a stale reading; the strip is pushed on the feed's fast tick along
@@ -1119,7 +1122,7 @@ Two related guards:
   inside that await the whole time. The bound is `2 × speech cap + 30s` — a
   guard, not a length limit.
 
-discord.py's voice logging is forwarded into `app.log` (`discord.voice_state`
+discord.py's voice logging is forwarded into `logs/app.log` (`discord.voice_state`
 and `discord.gateway` at INFO). The close code is the only explanation of why
 a call ended and it exists nowhere else; without the bridge a drop is silent.
 
@@ -1205,7 +1208,7 @@ OPENAI_API_KEY=      # only when provider is "openai"
 
 Real environment variables override the file. The UI shows presence only,
 never values, and has no field to type a key into. `.env`, `voices/`,
-`deadinternet.json`, and `tts-server.log` are gitignored.
+`deadinternet.json`, and `logs/` are gitignored.
 
 Edits to `.env` need an app restart.
 

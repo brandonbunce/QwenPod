@@ -7,7 +7,7 @@
 #   ./run.sh stop --all      stop the app, tts-server and whisper-server
 #   ./run.sh restart [-d]    stop then start (detached by default)
 #   ./run.sh status          what is running, which backend, how full the card is
-#   ./run.sh logs            follow app.log
+#   ./run.sh logs            follow logs/app.log
 #
 #   --fresh                  with start/restart: stop tts-server and unload
 #                            Ollama first, so tts-server allocates on an empty card
@@ -25,16 +25,17 @@
 #    it on every app restart would put that at risk every time. Use --all, or
 #    --fresh on the way back up, when you mean it.
 #
-#  * Redirect stdout into app.log. The app writes app.log itself AND prints every
-#    line, so that redirection -- which the docs used to recommend -- duplicates
-#    every entry. Console output goes to app-console.log instead, which is only
-#    interesting when something dies before logging is up.
+#  * Redirect stdout into logs/app.log. The app writes that file itself AND
+#    prints every line, so that redirection -- which the docs used to recommend
+#    -- duplicates every entry. Console output goes to logs/app-console.log
+#    instead, which is only interesting when something dies before logging is up.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 HERE=$(pwd -P)
 
 PY="$HERE/.venv-app/bin/python"
-CONSOLE="$HERE/app-console.log"
+LOGS="$HERE/logs"
+CONSOLE="$LOGS/app-console.log"
 TTS_BIN="$HERE/build/tts-server"
 WHISPER_BIN="$HERE/whisper.cpp/build/bin/whisper-server"
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
@@ -174,6 +175,7 @@ do_start() {
 
     # setsid, not `& disown`: a new session is what actually detaches it from the
     # terminal. The disown form was tried and quietly died with its shell.
+    mkdir -p "$LOGS"
     setsid nohup "$PY" ./app.py "${PASS[@]}" >> "$CONSOLE" 2>&1 < /dev/null &
     local i
     for i in $(seq 1 40); do
@@ -182,7 +184,7 @@ do_start() {
             return 0
         }
         [ -z "$(app_pids)" ] && {
-            warn "app exited during startup -- last lines of app-console.log:"
+            warn "app exited during startup -- last lines of logs/app-console.log:"
             tail -n 15 "$CONSOLE" >&2
             exit 1
         }
@@ -208,7 +210,7 @@ do_status() {
     p=$(bin_pids "$TTS_BIN" | pids_line)
     if [ -n "$p" ]; then
         local backend
-        backend=$(grep -a "Talker backend" "$HERE/tts-server.log" 2>/dev/null | tail -n1 \
+        backend=$(grep -a "Talker backend" "$LOGS/tts-server.log" 2>/dev/null | tail -n1 \
                   | sed 's/.*Talker backend: //') || true
         say "tts-server     : running (pid $p)${backend:+ -- $backend}"
     else
@@ -230,5 +232,5 @@ case "$CMD" in
     stop)    do_stop ;;
     restart) do_stop; do_start ;;
     status)  do_status ;;
-    logs)    exec tail -n 40 -F "$HERE/app.log" ;;
+    logs)    exec tail -n 40 -F "$LOGS/app.log" ;;
 esac

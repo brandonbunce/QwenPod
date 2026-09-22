@@ -20,11 +20,12 @@ import urllib.request
 
 from deadinternet.config import (ENV_PATH, LOG_MAX_BYTES, LOG_PATH,
                                  OUTPUT_DISCORD, OUTPUT_LOCAL,
-                                 TTS_CPU, TTS_DEVICES, TTS_GPU,
+                                 TTS_CPU, TTS_DEVICES, TTS_GPU, TTS_LOG_PATH,
                                  PERSONA_POOL_TARGET, PERSONA_SAMPLES,
                                  PERSONA_SCAN_CAP, PERSONA_YEARS, ROOT,
-                                 VRAM_WARN_FRACTION, State, gpu_busy_percent,
-                                 load_env, plain_md, vram_info)
+                                 VRAM_WARN_FRACTION, WHISPER_LOG_PATH, State,
+                                 gpu_busy_percent, load_env, logs_dir,
+                                 plain_md, vram_info)
 from deadinternet import comedy
 from deadinternet.events import EventLog
 from deadinternet.director import Director
@@ -169,7 +170,8 @@ class DeadInternetApp:
             # GGML_VK_DISABLE were both tried and are ignored.
             env["GGML_VK_VISIBLE_DEVICES"] = ""
         self.log(f"[tts] backend: {s.tts_device}")
-        log_path = os.path.join(ROOT, "tts-server.log")
+        logs_dir()
+        log_path = TTS_LOG_PATH
         self.log(f"[tts] launching: {' '.join(cmd)}")
         try:
             # Rolled the same way app.log is. This one is opened "ab" and
@@ -234,7 +236,8 @@ class DeadInternetApp:
         cmd = [binary, "-m", model, "--host", "127.0.0.1", "--port", port,
                "-l", s.whisper_lang, "-t", str(self.whisper.threads)]
         try:
-            logfile = open(os.path.join(ROOT, "whisper-server.log"), "ab")
+            logs_dir()
+            logfile = open(WHISPER_LOG_PATH, "ab")
             self._whisper_proc = subprocess.Popen(
                 cmd, cwd=ROOT, stdout=logfile, stderr=logfile,
                 start_new_session=True)
@@ -250,7 +253,7 @@ class DeadInternetApp:
                 return True, "whisper-server up."
             if self._whisper_proc.poll() is not None:
                 self.whisper.server_url = ""
-                return False, "whisper-server exited - see whisper-server.log"
+                return False, "whisper-server exited - see logs/whisper-server.log"
             time.sleep(0.5)
         self.whisper.server_url = ""
         return False, "whisper-server did not answer in 60s"
@@ -417,7 +420,7 @@ class DeadInternetApp:
 
     # ---- logging ---------------------------------------------------------
     def log(self, msg):
-        """Everything the app has to say: stdout, app.log, and the UI tail.
+        """Everything the app has to say: stdout, logs/app.log, and the UI tail.
 
         The file is the point. Before this, log() only printed -- so a run
         started in a terminal instead of with `>> app.log` left no record, and
@@ -433,6 +436,7 @@ class DeadInternetApp:
         # read-only checkout should cost the record, not the show.
         try:
             with self._log_lock:
+                logs_dir()
                 if (os.path.exists(LOG_PATH)
                         and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES):
                     os.replace(LOG_PATH, LOG_PATH + ".1")
